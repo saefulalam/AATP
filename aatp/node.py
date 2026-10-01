@@ -174,8 +174,8 @@ def validate_node(node: object) -> str:
                           node["operation"], node["actor"], node["task_id"],
                           node.get("generator"), node["created_at"],
                           node.get("annotations"))
-    if "generator" not in node and "generator" in rebuilt:
-        raise _malformed("node generator mismatch")
+    if rebuilt != node:
+        raise _malformed("node not in canonical form")
     return node_id_of(rebuilt)
 
 

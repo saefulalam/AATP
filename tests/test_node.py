@@ -252,6 +252,20 @@ def test_PRV021_generator_defaults():
         make_node(CR1, [], "create", actor, TASK, {"kind": "robot"}, T0)
 
 
+def test_PRV021_generator_tamper_rejected():
+    from aatp.node import make_node, validate_node
+    actor = _actor()
+    n, _ = make_node(CR1, [], "create", actor, TASK,
+                     {"kind": "ai", "assurance": "self_asserted"}, T0)
+    validate_node(n)  # canonical passes
+    tampered = dict(n)
+    tampered["generator"] = dict(n["generator"])
+    del tampered["generator"]["assurance"]  # strip defaulted claim
+    with pytest.raises(AATPError) as ei:
+        validate_node(tampered)
+    assert ei.value.code == "ERR_MALFORMED_MESSAGE"
+
+
 def test_PRV022_no_raw_prompts():
     from aatp.node import make_node
     actor = _actor()
