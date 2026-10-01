@@ -45,3 +45,37 @@ Gaps, ambiguities and implementation choices (blueprint §0.4). One entry per de
 ## D-007: Signature selection
 
 - `verify_envelope(env, expected_payload_type, public_key_raw, key_id=None)` verifies exactly one entry: the first with `keyid == key_id` (none: `ERR_SIGNATURE_INVALID`), or `signatures[0]` when `key_id` is None. Other entries are not verified here; multi-signature / counter-signatures are PRV-023 (M6+).
+
+## D-008: Card verification error-code mapping (ID-*, Task 3)
+
+- The blueprint names codes for rollback (`ERR_CARD_ROLLBACK`), commitment (`ERR_KEY_COMMITMENT_MISMATCH`), revoked keys (`ERR_KEY_REVOKED`) and suites (`ERR_SUITE_UNSUPPORTED`), but not for the other `verify_card` failures. Mapping used: `v != "0.2"` (card/rotation/revocation) → `ERR_PROTOCOL_VERSION`; suites missing `AATP-S1` → `ERR_SUITE_UNSUPPORTED`; every shape/type/timestamp-format failure → `ERR_MALFORMED_MESSAGE`; `agent_id` ≠ derived-from-genesis (ID-001) or ≠ pin → `ERR_AUTH_FAILED`; rotation `from_key_id`/final-key chain breaks → `ERR_SIGNATURE_INVALID`; card validity length > 30d (ID-013) or `now` outside `[issued_at, expires_at]` ± skew → `ERR_MESSAGE_EXPIRED`; key windows (`not_before`/`not_after` ± skew, ID-014) and `enc_key` length > 7d / window miss (ID-012) → `ERR_KEY_EXPIRED`.
+- `pinned_agent_id=None` → `ERR_AUTH_FAILED` (ID-004 deny-by-default; only `pinned` mode is implemented in M1, `org_attested`/`did` are M6+). Callers with another trust basis pass the expected id explicitly.
+
+## D-009: Genesis key_id is inferred (ID-021, Task 3)
+
+- The Card schema stores `genesis_public_key` but no genesis `key_id`. `verify_card` infers it as `key_history[0].from_key_id` when history is non-empty, else the current `signing_key.key_id`. The first hop's `from` check is therefore tautological; its security comes from the signature check against the genesis public key. A genesis card (empty history) additionally requires `signing_key.public_key == genesis_public_key`.
+
+## D-010: Revocation by the next-commitment key (ID-023, Task 3)
+
+- The blueprint does not say how the verifier obtains the next key's public key. `make_revocation` accepts optional `public_key_raw32` (emitted as `public_key` b64url, an allowed unknown-optional field per GEN-012) and `verify_card` uses it only on the second path: current-key verification is tried first (strict `key_id` binding); on `ERR_SIGNATURE_INVALID` it requires `sha256(public_key) == active commitment` and verifies `signatures[0]` with it. Without a matching `public_key` the second path fails closed with `ERR_SIGNATURE_INVALID`.
+- Active commitment = `card.next_commitment` if present else the last rotation's `next_commitment` (no equality required between the two, so a card may publish fresh pre-rotation without a new history entry).
+
+## D-011: Revocation envelope carries `v: "0.2"` (Task 3)
+
+- Blueprint §4.4 shows rotation with `"v":"0.2"` but revocation without it (abbreviated shape). `make_revocation` includes `"v":"0.2"` and `verify_card` gates it with `ERR_PROTOCOL_VERSION`, consistent with rotation handling.
+
+## D-012: Revocation timing checks (ID-024, Task 3)
+
+- `verify_card` rejects a card whose *current* signing key is revoked with `effective_at <= now` (`ERR_KEY_REVOKED`). `check_key_not_revoked(card, key_id, created_at)` (for M5 message checks) raises `ERR_KEY_REVOKED` iff some entry matches `key_id` with `effective_at <= created_at`; it trusts `verify_card` output and does not re-verify revocation signatures — callers must pass verified cards. The "created before revocation but received after learning of it" policy exception is M5 policy scope; M1 implements the strict comparison.
+
+## D-013: Task 2 follow-up confined to Task 3 (non-dict payloads)
+
+- `verify_envelope` (Task 2) can return scalar payloads. `aatp/card.py` requires `dict` after every card/rotation/revocation verification (`ERR_MALFORMED_MESSAGE` otherwise). `aatp/dsse.py` is untouched; a global non-object rejection stays a Task 2 follow-up (ledger T2-2).
+
+## D-014: Vectors in Task 3 (V03 now; node1/V06 deferred)
+
+- `reference_vectors.py` now emits V03 (`genesis_pub_hex`, `agent_id`, asserted against Appendix C). The brief's Step 6 also mentions node1 JCS + V06, but those need M3 `node.make` output; they stay deferred to the Task 9 vector consolidation (with ledger T0-1/T1-1).
+
+## D-015: CardCache failure mode (ID-011, Task 3)
+
+- Missing file = empty cache. Corrupt JSON / wrong types / unreadable / unwritable file → `ERR_INTERNAL` (fail closed, never silently reset, so rollback protection cannot be bypassed by deleting semantics — note: deleting the file itself yields an empty cache, which operators must protect like any trust store).
