@@ -129,3 +129,4 @@ Gaps, ambiguities and implementation choices (blueprint §0.4). One entry per de
 - CRY-006: test recipient keys use `cryptography` `X25519PrivateKey.generate()` (OpenSSL OS CSPRNG), same basis as `SoftwareSigner.generate()`; no fixed HPKE vectors per blueprint §9 (RFC 9180 A.2.1 already gated in Task 0).
 - MSG-013 scope: `max_message_bytes=262144` measured on `JCS(dsse_envelope)` plaintext bytes; `seal_packet` rejects oversize with `ERR_SIZE_LIMIT` before sealing.
 - Wrap `pt` is the raw 32-byte CEK (not JCS); `wrap_cek` signature carries `transfer_id` explicitly since `info_r` binds it (`cr/s/r/t/k` short keys per §9.2). `open_packet` rebuilds `info` from packet `to`/`to_key_id` only, never inner message.
+- Packet `aatp != "0.2"` → `ERR_MALFORMED_MESSAGE` (not `ERR_PROTOCOL_VERSION`): packet `aatp` is a relay-routing version tag, distinct from the envelope/node `v` protocol-version convention.

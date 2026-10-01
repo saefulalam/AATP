@@ -239,3 +239,51 @@ def test_wrap_strict_shape_rejected():
     with pytest.raises(AATPError) as ei:
         unwrap_cek({"agent_id": "a", "enc_key_id": "e", "enc": "!!!", "ct": ""}, "cr", "s", "t", ks)
     assert ei.value.code == "ERR_MALFORMED_MESSAGE"
+
+
+def test_seal_lone_surrogate_rejected():
+    from aatp.seal import open_packet, seal_packet
+    _, env = _offer_envelope()
+    _, pk_raw = _gen_recipient()
+    with pytest.raises(AATPError) as ei:
+        seal_packet("\ud800", "e5", pk_raw, env)
+    assert ei.value.code == "ERR_MALFORMED_MESSAGE"
+    with pytest.raises(AATPError) as ei:
+        seal_packet("aatp:recv1", "\ud800", pk_raw, env)
+    assert ei.value.code == "ERR_MALFORMED_MESSAGE"
+    sk_raw, pk_raw2 = _gen_recipient()
+    pkt = seal_packet("aatp:recv1", "e5", pk_raw2, env)
+    ks = _keystore_for("e5", sk_raw)
+    pkt_bad = dict(pkt)
+    pkt_bad["to"] = "\ud800"
+    with pytest.raises(AATPError) as ei:
+        open_packet(pkt_bad, ks)
+    assert ei.value.code == "ERR_MALFORMED_MESSAGE"
+
+
+def test_packet_extra_key_rejected():
+    from aatp.seal import open_packet, seal_packet
+    _, env = _offer_envelope()
+    sk_raw, pk_raw = _gen_recipient()
+    pkt = seal_packet("aatp:recv1", "e5", pk_raw, env)
+    ks = _keystore_for("e5", sk_raw)
+    pkt_extra = dict(pkt)
+    pkt_extra["extra"] = "x"
+    with pytest.raises(AATPError) as ei:
+        open_packet(pkt_extra, ks)
+    assert ei.value.code == "ERR_MALFORMED_MESSAGE"
+
+
+def test_wrap_extra_key_rejected():
+    from aatp.seal import KeyStore, unwrap_cek, wrap_cek
+    import secrets
+    cek = secrets.token_bytes(32)
+    cr = "sha256:" + "0" * 64
+    sk_raw, pk_raw = _gen_recipient()
+    w = wrap_cek(cek, cr, "aatp:s", "aatp:r", "e5", "tx1", pk_raw)
+    ks = KeyStore({"e5": sk_raw})
+    w_extra = dict(w)
+    w_extra["extra"] = "x"
+    with pytest.raises(AATPError) as ei:
+        unwrap_cek(w_extra, cr, "aatp:s", "tx1", ks)
+    assert ei.value.code == "ERR_MALFORMED_MESSAGE"

@@ -41,6 +41,17 @@ def _check_str(v, name: str) -> str:
     return v
 
 
+def _utf8(s: str, name: str) -> bytes:
+    try:
+        return s.encode("utf-8")
+    except UnicodeEncodeError:
+        raise _malformed(f"{name} must be valid UTF-8") from None
+
+
+_PACKET_KEYS = frozenset({"aatp", "to", "to_key_id", "enc", "ct"})
+_WRAP_KEYS = frozenset({"agent_id", "enc_key_id", "enc", "ct"})
+
+
 class KeyStore:
     """Minimal in-memory recipient X25519 key store (Task 7).
 
@@ -100,12 +111,12 @@ def _seal(pk_raw: bytes, info: bytes, pt: bytes) -> tuple[bytes, bytes]:
         enc, ctx = _SUITE.create_sender_context(pkr, bytes(info))
         ct = ctx.seal(bytes(pt), b"")
         return enc, ct
-    except Exception as e:
-        raise err("ERR_INTERNAL", "hpke seal failed") from e
+    except Exception:
+        raise err("ERR_INTERNAL", "hpke seal failed") from None
 
 
 def packet_info(to: str, to_key_id: str) -> bytes:
-    return D_PACKET + to.encode("utf-8") + b"\n" + to_key_id.encode("utf-8")
+    return D_PACKET + _utf8(to, "to") + b"\n" + _utf8(to_key_id, "to_key_id")
 
 
 def wrap_info(content_root: str, sender: str, recipient: str, transfer_id: str, enc_key_id: str) -> bytes:
@@ -128,6 +139,8 @@ def seal_packet(recipient_agent_id: str, to_key_id: str, recipient_enc_pub_raw: 
 def open_packet(packet: dict, keystore: KeyStore) -> dict:
     if not isinstance(packet, dict):
         raise _malformed("packet must be an object")
+    if set(packet.keys()) != _PACKET_KEYS:
+        raise _malformed("packet must have exactly {aatp,to,to_key_id,enc,ct}")
     if packet.get("aatp") != "0.2":
         raise _malformed("unsupported packet version")
     to = packet.get("to")
@@ -166,6 +179,8 @@ def wrap_cek(cek: bytes, content_root: str, sender_agent_id: str, recipient_agen
 def unwrap_cek(entry: dict, content_root: str, sender_agent_id: str, transfer_id: str, keystore: KeyStore) -> bytes:
     if not isinstance(entry, dict):
         raise _malformed("wrap entry must be an object")
+    if set(entry.keys()) != _WRAP_KEYS:
+        raise _malformed("wrap entry must have exactly {agent_id,enc_key_id,enc,ct}")
     rid = entry.get("agent_id")
     kid = entry.get("enc_key_id")
     enc_s = entry.get("enc")
