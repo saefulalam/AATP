@@ -167,7 +167,13 @@ def verify_chain(leaf_env: dict, chain_envs: list, roots, now: str,
     """Verify a grant chain; return the leaf grant or raise AATPError."""
     if not isinstance(chain_envs, list):
         raise _malformed("chain_envs must be a list")
-    revoked_set = set() if revoked is None else set(revoked)
+    if revoked is None:
+        revoked_set = set()
+    else:
+        try:
+            revoked_set = set(revoked)
+        except TypeError:
+            raise _malformed("revoked must be iterable") from None
     now_dt = parse_ts(now)
     leaf = _verify_grant_envelope(leaf_env, key_resolver)
     ancestors = [_verify_grant_envelope(e, key_resolver) for e in chain_envs]

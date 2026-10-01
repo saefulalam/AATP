@@ -404,6 +404,17 @@ def test_AUT005_revoked_ancestor_rejected():
     assert ei.value.code == "ERR_GRANT_INVALID"
 
 
+def test_AUT005_revoked_not_iterable():
+    leaf, chain, _ = _chain([
+        (1, OWNER, ALICE, [_recv("project:alpha/*"), _deleg("project:alpha/*")],
+         "INTERNAL", False),
+        (2, ALICE, BOB, [_recv("project:alpha/a")], "INTERNAL", False),
+    ])
+    with pytest.raises(AATPError) as ei:
+        _verify(leaf, chain, {OWNER}, revoked=123)
+    assert ei.value.code == "ERR_MALFORMED_MESSAGE"
+
+
 # --- AUT-006 presenter + action/resource --------------------------------------------
 
 def test_AUT006_presenter_mismatch_rejected():
