@@ -56,6 +56,44 @@ def main():
     assert v04_cr == "sha256:9067a66c672c42accf461d38069a837189e8e2fe0713f4edc6f8e5ec3ce9c1cf"
     VECTORS["V04"] = {"manifest_jcs_hex": v04_jcs.hex(),
                       "stream_hex": v04_stream.hex(), "content_root": v04_cr}
+    # V05-STRUCTURE (implementation-generated example, NOT a blueprint vector).
+    # Blueprint V05/V06 expected hashes are UNVERIFIABLE (vectors file absent,
+    # node1 inputs under-specified per D-019/D-020); no 1f3ce1/96f802/cc88b1 or
+    # V06 signature string is asserted anywhere. Mechanism grammar is normative
+    # (blueprint section 7): node_id = sha256:hex(SHA256(D_NODE + JCS(node))).
+    d_node = b"AATP/0.2/NODE\n"
+    ex_actor = "aatp:" + "2" * 52  # synthetic local actor, clearly not V03
+    ex_cr1 = v04_cr
+    ex_cr2 = "sha256:316dcfe880067987f2d83df8c040db75612d521f7df41ffe37a1847bed253bec"
+    ex_n1 = {"v": "0.2", "content_root": ex_cr1, "parents": [],
+             "operation": "create", "actor": ex_actor,
+             "task_id": "task_local_m3_001",
+             "created_at": "2026-10-01T00:00:00Z"}
+    ex_id1 = "sha256:" + sha256_hex(d_node + jcs_minimal(ex_n1))
+    ex_n2 = {"v": "0.2", "content_root": ex_cr2, "parents": [ex_id1],
+             "operation": "modify", "actor": ex_actor,
+             "task_id": "task_local_m3_001",
+             "created_at": "2026-10-01T00:01:00Z"}
+    ex_id2 = "sha256:" + sha256_hex(d_node + jcs_minimal(ex_n2))
+    ex_n3 = {"v": "0.2", "content_root": ex_cr1, "parents": [ex_id2],
+             "operation": "revert", "actor": ex_actor,
+             "task_id": "task_local_m3_001",
+             "created_at": "2026-10-01T00:02:00Z"}
+    ex_id3 = "sha256:" + sha256_hex(d_node + jcs_minimal(ex_n3))
+    assert ex_id3 != ex_id1  # revert: same content_root, distinct node_id
+    VECTORS["V05-STRUCTURE"] = {
+        "note": ("implementation-generated example, NOT a blueprint vector; "
+                 "blueprint V05/V06 hashes UNVERIFIABLE per D-020"),
+        "node_id_grammar": "sha256:hex(SHA256(D_NODE + JCS(node)))",
+        "D_NODE_ascii": "AATP/0.2/NODE\n",
+        "required_fields": ["v", "content_root", "parents", "operation",
+                            "actor", "task_id", "created_at"],
+        "arity": {"create": 0, "merge": ">=2",
+                  "modify/revert/supersede/verify": ">=1"},
+        "example_actor": ex_actor,
+        "example_node1_jcs_hex": jcs_minimal(ex_n1).hex(),
+        "example_node_ids": [ex_id1, ex_id2, ex_id3],
+    }
     # write_bytes: avoid platform newline translation (vectors must be byte-exact).
     OUT.write_bytes(json.dumps(VECTORS, indent=2, sort_keys=True).encode("utf-8") + b"\n")
 
