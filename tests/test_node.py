@@ -287,3 +287,35 @@ def test_GEN004_strict_timestamp():
     assert ei.value.code == "ERR_MALFORMED_MESSAGE"
     with pytest.raises(AATPError):
         make_node(CR1, [], "create", actor, TASK, None, "not-a-time")
+
+
+def test_PRV_deep_chain_no_recursion_leak():
+    from aatp.node import DagStore
+    store = DagStore()
+    n = 2000
+    ids = ["sha256:%064x" % i for i in range(n)]
+    store._nodes[ids[0]] = (
+        {"v": "0.2", "content_root": CR1, "parents": [],
+         "operation": "create", "actor": _actor(), "task_id": TASK,
+         "created_at": T0}, None)
+    for i in range(1, n):
+        store._nodes[ids[i]] = (
+            {"v": "0.2", "content_root": CR1, "parents": [ids[i - 1]],
+             "operation": "modify", "actor": _actor(), "task_id": TASK,
+             "created_at": T1}, None)
+    try:
+        result = store.ancestors(ids[-1])
+    except RecursionError:
+        pytest.fail("ancestors() leaked bare RecursionError")
+    except AATPError as e:
+        assert e.code == "ERR_INVALID_PARENT"
+    else:
+        assert len(result) == n - 1
+    try:
+        status = store.ancestry_status(ids[-1])
+    except RecursionError:
+        pytest.fail("ancestry_status() leaked bare RecursionError")
+    except AATPError as e:
+        assert e.code == "ERR_INVALID_PARENT"
+    else:
+        assert status == "complete"

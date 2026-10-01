@@ -32,4 +32,4 @@ class AATPError(Exception):
 
 
 def err(code: str, detail: str | None = None) -> AATPError:
-    return AATPError(code, ERROR_REGISTRY[code], detail)
+    return AATPError(code, ERROR_REGISTRY.get(code, ERROR_REGISTRY["ERR_INTERNAL"]), detail)

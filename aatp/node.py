@@ -238,7 +238,10 @@ class DagStore:
                         path.discard(p)
 
         path.add(node_id)
-        visit(node_id)
+        try:
+            visit(node_id)
+        except RecursionError:
+            raise err("ERR_INVALID_PARENT", "ancestry too deep") from None
         path.discard(node_id)
         return out, complete
 

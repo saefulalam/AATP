@@ -424,3 +424,46 @@ def test_ART020_zero_chunks_complete(tmp_path):
     assert rcpt["type"] == "RECEIPT"
     assert rcpt["body"]["outcome"] == "accepted"
     assert rcpt["body"]["content_root"] == parts["cr"]
+
+
+def test_MSG001_missing_recipient(tmp_path):
+    from aatp import messages as msg_mod
+    W = _World(tmp_path)
+    with pytest.raises(AATPError) as ei:
+        build_message("OFFER", W.A.agent_id, "ka1", None, {},
+                      now=NOW, lifetime=60)
+    assert ei.value.code == "ERR_MALFORMED_MESSAGE"
+    raw = {"v": "0.2", "type": "OFFER", "id": "msg_no_rcpt",
+           "sender": W.A.agent_id, "sender_key_id": "ka1",
+           "created_at": NOW, "expires_at": shift_ts(NOW, 600),
+           "corr": {}, "crit": [], "body": {}}
+    with pytest.raises(AATPError) as ei2:
+        msg_mod.check_shape(raw)
+    assert ei2.value.code == "ERR_MALFORMED_MESSAGE"
+
+
+def test_GEN012_crit_unknown(tmp_path):
+    from aatp import messages as msg_mod
+    W = _World(tmp_path)
+    msg = build_message("OFFER", W.A.agent_id, "ka1", W.B.agent_id, {},
+                        now=NOW, lifetime=60, crit=["x-unknown"])
+    with pytest.raises(AATPError) as ei:
+        msg_mod.check_shape(msg)
+    assert ei.value.code == "ERR_UNSUPPORTED_EXTENSION"
+    assert ei.value.numeric == 1004
+
+
+def test_TRF004_sealed_manifest_only(tmp_path):
+    W = _World(tmp_path)
+    recv = W.receiver()
+    parts = _offer_parts(W, [("a.txt", b"hi", False)], tx_id="tx_trf004")
+    body = dict(parts["body"])
+    del body["manifest"]
+    body["sealed_manifest"] = "sealed-dummy"
+    pkt, _m, _e = _sealed(W, W.A, W.B, "OFFER", body,
+                          corr={"transfer_id": "tx_trf004"})
+    out = recv.receive_control(pkt, now=NOW)
+    assert len(out) == 1
+    rej = verify_envelope(out[0], PT_MESSAGE, W.B.signer.public_key_raw())
+    assert rej["type"] == "REJECT"
+    assert rej["body"]["code"] == "ERR_UNSUPPORTED_EXTENSION"
