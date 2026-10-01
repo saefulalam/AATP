@@ -45,6 +45,29 @@
       "created_at"
     ]
   },
+  "V07": {
+    "cek_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "chunk_size": 8,
+    "chunks": [
+      {
+        "ct_hex": "7ddb2a5e8d8ecfdbdf23f165585271f9598a9ddaad072de1",
+        "i": 0,
+        "nonce_hex": "000000000000000000000000"
+      },
+      {
+        "ct_hex": "013910b55eca493016312b9e709d27d9800b9cfe25",
+        "i": 1,
+        "nonce_hex": "000000000000000000000001"
+      }
+    ],
+    "content_root": "sha256:9067a66c672c42accf461d38069a837189e8e2fe0713f4edc6f8e5ec3ce9c1cf",
+    "stream_hex": "6563686f2068690a68656c6c6f",
+    "transfer_id": "tx_demo1"
+  },
+  "V08": {
+    "expect": "ERR_CHUNK_AUTH_FAILED",
+    "note": "tampered chunk -> ERR_CHUNK_AUTH_FAILED; chunk 0 presented as index 1 -> ERR_CHUNK_AUTH_FAILED"
+  },
   "V09": {
     "expect": "ERR_MALFORMED_MESSAGE",
     "input": "{\"a\":1.5}"

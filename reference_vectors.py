@@ -4,6 +4,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+
 OUT = Path(__file__).parent / "tests" / "vectors" / "aatp_v0_2_vectors.json"
 
 
@@ -93,6 +95,37 @@ def main():
         "example_actor": ex_actor,
         "example_node1_jcs_hex": jcs_minimal(ex_n1).hex(),
         "example_node_ids": [ex_id1, ex_id2, ex_id3],
+    }
+    # V07/V08 chunk AEAD (independent of aatp.chunks; blueprint App. C + section 9.1).
+    # AAD(i) = D_CHUNK || JCS({"cr","i","n","t"}), nonce(i) = 0x00000000||u64be(i).
+    v07_cek = bytes(range(32))
+    v07_cr = v04_cr
+    v07_tx = "tx_demo1"
+    v07_stream_hex = "6563686f2068690a68656c6c6f"
+    v07_stream = bytes.fromhex(v07_stream_hex)
+    v07_pts = [v07_stream[0:8], v07_stream[8:]]
+    v07_aead = ChaCha20Poly1305(v07_cek)
+    v07_nonces = [b"\x00" * 4 + i.to_bytes(8, "big") for i in range(2)]
+    v07_cts = []
+    for i, pt in enumerate(v07_pts):
+        a = b"AATP/0.2/CHUNK\n" + jcs_minimal(
+            {"cr": v07_cr, "i": i, "n": 2, "t": v07_tx})
+        v07_cts.append(v07_aead.encrypt(v07_nonces[i], pt, a))
+    assert v07_nonces[0].hex() == "000000000000000000000000"
+    assert v07_nonces[1].hex() == "000000000000000000000001"
+    assert v07_cts[0].hex() == "7ddb2a5e8d8ecfdbdf23f165585271f9598a9ddaad072de1"
+    assert v07_cts[1].hex() == "013910b55eca493016312b9e709d27d9800b9cfe25"
+    VECTORS["V07"] = {
+        "cek_hex": v07_cek.hex(), "content_root": v07_cr,
+        "transfer_id": v07_tx, "chunk_size": 8,
+        "stream_hex": v07_stream_hex,
+        "chunks": [{"i": i, "nonce_hex": v07_nonces[i].hex(),
+                    "ct_hex": v07_cts[i].hex()} for i in range(2)],
+    }
+    VECTORS["V08"] = {
+        "note": "tampered chunk -> ERR_CHUNK_AUTH_FAILED; "
+                "chunk 0 presented as index 1 -> ERR_CHUNK_AUTH_FAILED",
+        "expect": "ERR_CHUNK_AUTH_FAILED",
     }
     # write_bytes: avoid platform newline translation (vectors must be byte-exact).
     OUT.write_bytes(json.dumps(VECTORS, indent=2, sort_keys=True).encode("utf-8") + b"\n")
