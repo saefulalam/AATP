@@ -30,6 +30,13 @@ def _check_cek(cek: bytes) -> None:
         raise _auth_failed("CEK must be 32 bytes")
 
 
+def _check_ids(content_root: str, transfer_id: str) -> None:
+    if not isinstance(content_root, str):
+        raise _auth_failed("content_root must be str")
+    if not isinstance(transfer_id, str):
+        raise _auth_failed("transfer_id must be str")
+
+
 def nonce(i: int) -> bytes:
     """nonce(i) = 0x00000000 || uint64_be(i); reject i >= 2^63 (ENC-006)."""
     _check_index(i)
@@ -50,6 +57,7 @@ def aad(content_root: str, i: int, total: int, transfer_id: str) -> bytes:
         raise _sequence_invalid("total out of range")
     if i >= total:
         raise _sequence_invalid("index >= total")
+    _check_ids(content_root, transfer_id)
     return D_CHUNK + jcs({"cr": content_root, "i": i, "n": total, "t": transfer_id})
 
 
@@ -63,6 +71,7 @@ def encrypt_chunks(
     stream = bytes(stream)
     if not isinstance(chunk_size, int) or isinstance(chunk_size, bool) or chunk_size <= 0:
         raise _sequence_invalid("chunk_size must be a positive integer")
+    _check_ids(content_root, transfer_id)
     total = (len(stream) + chunk_size - 1) // chunk_size if stream else 0
     if total > _SEQ_LIMIT:
         raise _sequence_invalid("chunk count >= 2^63")
@@ -88,8 +97,13 @@ def decrypt_one(
         raise _sequence_invalid("index >= total")
     if not isinstance(ct, (bytes, bytearray)):
         raise _auth_failed("ciphertext must be bytes")
+    _check_ids(content_root, transfer_id)
     aead = ChaCha20Poly1305(bytes(cek))
+    n = nonce(index)
+    a = aad(content_root, index, total, transfer_id)
     try:
-        return aead.decrypt(nonce(index), bytes(ct), aad(content_root, index, total, transfer_id))
+        return aead.decrypt(n, bytes(ct), a)
     except InvalidTag:
+        raise _auth_failed("chunk authentication failed") from None
+    except Exception:
         raise _auth_failed("chunk authentication failed") from None

@@ -117,4 +117,7 @@ Gaps, ambiguities and implementation choices (blueprint §0.4). One entry per de
 ## D-021: Node/DAG error-code mapping (PRV-*, Task 5)
 
 - Blueprint §14 names `ERR_INVALID_PARENT` ("Parent invalid/missing/time-inconsistent"), `ERR_DAG_CYCLE` and `ERR_ARTIFACT_HASH_MISMATCH` but no code for PRV-001 shape or PRV-006 arity. Mapping used: node shape failures (bad digest/actor/task/timestamp/operation/generator/annotations, unsorted or duplicate parents, unknown `parent_policy`, non-object payload) → `ERR_MALFORMED_MESSAGE` (closest: "violates schema/GEN-010"); `v != "0.2"` → `ERR_PROTOCOL_VERSION`; arity violations (PRV-006), time-skew violations (PRV-005) and `require`-policy unknown parents (PRV-010) → `ERR_INVALID_PARENT`; own-`node_id` in ancestry → `ERR_DAG_CYCLE` (1306); signature failures propagate `ERR_SIGNATURE_INVALID` from `verify_envelope`; unresolvable actor key → `ERR_AUTH_FAILED`; unknown `node_id` in `get`/`ancestors`/`ancestry_status` → `ERR_ARTIFACT_NOT_FOUND`.
-- `generator.assurance` absent defaults to `self_asserted` (PRV-021 claim); `generator` absent omits the field (schema-optional). Raw `prompt`/`prompt_text`/`toolcalls` keys in `generator` → `ERR_MALFORMED_MESSAGE` (PRV-022 digests-only).
+## D-022: Chunk fail-closed guards (M4 review fix wave)
+
+- Non-`str` `content_root`/`transfer_id` in `aad()`/`encrypt_chunks()`/`decrypt_one()` → `ERR_CHUNK_AUTH_FAILED` (fail closed, avoids oracle distinguishing type errors from auth failures; `jcs` would otherwise accept ints/`None` or raise `ERR_MALFORMED_MESSAGE`).
+- `decrypt_one` maps any `decrypt` failure to `ERR_CHUNK_AUTH_FAILED` (`except InvalidTag` kept, plus `except Exception` net); AAD/nonce validation runs before the `try` so `ERR_SEQUENCE_INVALID` is never swallowed.

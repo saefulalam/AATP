@@ -88,3 +88,55 @@ def test_ENC006_encrypt_rejects_huge_chunk_count():
     with pytest.raises(AATPError) as ei:
         nonce(2**63)
     assert ei.value.code == "ERR_SEQUENCE_INVALID"
+
+
+def test_decrypt_garbage_short_ct_fail_closed():
+    with pytest.raises(AATPError) as ei:
+        decrypt_one(CEK, 0, 2, CR1, TX, b"\x00" * 10)
+    assert ei.value.code == "ERR_CHUNK_AUTH_FAILED"
+
+
+def test_decrypt_non_tag_failure_mapped():
+    cts = encrypt_chunks(CEK, STREAM, 8, CR1, TX)
+
+    def _boom(*args, **kwargs):
+        raise ValueError("simulated backend failure")
+
+    import aatp.chunks as chunks_mod
+
+    orig = chunks_mod.ChaCha20Poly1305
+    try:
+        chunks_mod.ChaCha20Poly1305 = lambda *a, **k: type(
+            "B", (), {"decrypt": _boom, "encrypt": orig(*a, **k).encrypt}
+        )()
+        with pytest.raises(AATPError) as ei:
+            decrypt_one(CEK, 0, 2, CR1, TX, cts[0])
+        assert ei.value.code == "ERR_CHUNK_AUTH_FAILED"
+    finally:
+        chunks_mod.ChaCha20Poly1305 = orig
+
+
+def test_non_str_content_root_rejected():
+    with pytest.raises(AATPError) as ei:
+        aad(123, 0, 2, TX)
+    assert ei.value.code == "ERR_CHUNK_AUTH_FAILED"
+    with pytest.raises(AATPError) as ei:
+        encrypt_chunks(CEK, STREAM, 8, 123, TX)
+    assert ei.value.code == "ERR_CHUNK_AUTH_FAILED"
+    cts = encrypt_chunks(CEK, STREAM, 8, CR1, TX)
+    with pytest.raises(AATPError) as ei:
+        decrypt_one(CEK, 0, 2, 123, TX, cts[0])
+    assert ei.value.code == "ERR_CHUNK_AUTH_FAILED"
+
+
+def test_none_transfer_id_rejected():
+    with pytest.raises(AATPError) as ei:
+        aad(CR1, 0, 2, None)
+    assert ei.value.code == "ERR_CHUNK_AUTH_FAILED"
+    with pytest.raises(AATPError) as ei:
+        encrypt_chunks(CEK, STREAM, 8, CR1, None)
+    assert ei.value.code == "ERR_CHUNK_AUTH_FAILED"
+    cts = encrypt_chunks(CEK, STREAM, 8, CR1, TX)
+    with pytest.raises(AATPError) as ei:
+        decrypt_one(CEK, 0, 2, CR1, None, cts[0])
+    assert ei.value.code == "ERR_CHUNK_AUTH_FAILED"
