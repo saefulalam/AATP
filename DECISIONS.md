@@ -122,11 +122,39 @@ Gaps, ambiguities and implementation choices (blueprint §0.4). One entry per de
 - Non-`str` `content_root`/`transfer_id` in `aad()`/`encrypt_chunks()`/`decrypt_one()` → `ERR_CHUNK_AUTH_FAILED` (fail closed, avoids oracle distinguishing type errors from auth failures; `jcs` would otherwise accept ints/`None` or raise `ERR_MALFORMED_MESSAGE`).
 - `decrypt_one` maps any `decrypt` failure to `ERR_CHUNK_AUTH_FAILED` (`except InvalidTag` kept, plus `except Exception` net); AAD/nonce validation runs before the `try` so `ERR_SEQUENCE_INVALID` is never swallowed.
 
-## D-023: HPKE seal/wrap error mapping + KeyStore scope (MSG-010..013, ENC-020..023, Task 7)
-
-- pyhpke 0.6.5 concrete open-failure type (ledger T0-2): `pyhpke.exceptions.OpenError("Failed to open.")` for all recipient-open failures probed (tampered `ct`, tampered `enc`, wrong `info`). `KeyStore.open` / `open_packet` / `unwrap_cek` map it (and any other exception) to `ERR_DECRYPT_FAILED`, fail closed. `cryptography.exceptions.InvalidTag` is the inner cause one layer down.
+## D-023: HPKE seal/wrap error mapping + KeyStore scope (MSG-010..013, ENC-020..023, Task 7)- pyhpke 0.6.5 concrete open-failure type (ledger T0-2): `pyhpke.exceptions.OpenError("Failed to open.")` for all recipient-open failures probed (tampered `ct`, tampered `enc`, wrong `info`). `KeyStore.open` / `open_packet` / `unwrap_cek` map it (and any other exception) to `ERR_DECRYPT_FAILED`, fail closed. `cryptography.exceptions.InvalidTag` is the inner cause one layer down.
 - `KeyStore` here is a minimal in-memory map `enc_key_id -> raw 32-byte X25519 private key` with `open(enc_key_id, enc, ct, info) -> bytes`; unknown key id (and any type/shape failure inside `open`) → `ERR_DECRYPT_FAILED`, never `KeyError`/raw. Full OS/file-backed keystore with ID-012 validity windows is M7+ scope.
 - CRY-006: test recipient keys use `cryptography` `X25519PrivateKey.generate()` (OpenSSL OS CSPRNG), same basis as `SoftwareSigner.generate()`; no fixed HPKE vectors per blueprint §9 (RFC 9180 A.2.1 already gated in Task 0).
 - MSG-013 scope: `max_message_bytes=262144` measured on `JCS(dsse_envelope)` plaintext bytes; `seal_packet` rejects oversize with `ERR_SIZE_LIMIT` before sealing.
 - Wrap `pt` is the raw 32-byte CEK (not JCS); `wrap_cek` signature carries `transfer_id` explicitly since `info_r` binds it (`cr/s/r/t/k` short keys per §9.2). `open_packet` rebuilds `info` from packet `to`/`to_key_id` only, never inner message.
 - Packet `aatp != "0.2"` → `ERR_MALFORMED_MESSAGE` (not `ERR_PROTOCOL_VERSION`): packet `aatp` is a relay-routing version tag, distinct from the envelope/node `v` protocol-version convention.
+
+## D-024: CEK persisted in the transfer store file (TRF-020, Task 8)
+
+- The receiver transfer store (`store_path` JSON) keeps the unwrapped CEK base64url-encoded alongside `{transfer_id, content_root, have_ranges, state}` (TRF-020). The file is written with `write_bytes` (LF) and `chmod 0600` (best effort on Windows).
+- Rationale: resume-after-restart must decrypt with the *same* CEK (TRF-022); a test-only receiver has no M7 KeyStore to hold it. Production deployments MUST use the M7 KeyStore (`cek_ref` handle) instead of this file.
+- Never logged: no code path in `aatp/messages.py` / `aatp/transfer.py` prints keys, CEKs, or plaintext.
+
+## D-025: Replay = raise + previous response attached (MSG-004/005, Task 8)
+
+- Every authenticated control message id is cached as `(sender, id) -> {expires_at, response}` until `expires_at + skew` in a durable JSON file (survives restart; pruned on each receive).
+- A repeat raises `ERR_REPLAY_DETECTED` (N06) with the previously produced outbound envelopes attached as `exc.previous_response` (MSG-005 idempotency: retransmit returns the same ACCEPT/STATUS/RECEIPT instead of re-executing).
+- The cache covers all control types, a fail-closed superset of the "side-effecting (OFFER/ACCEPT/COMPLETE)" minimum.
+
+## D-026: OFFER validation failures return REJECT (TRF-001/002/005, Task 8)
+
+- Per the §8.4 receiver table (OFFER invalid → REJECT, state REJECTED), pre-accept validation failures produce a signed REJECT envelope whose `body.code` carries the specific error; authentication/protocol failures (sig, trust, replay, ...) raise instead.
+- Code mapping: node `content_root` ≠ OFFER `content_root` → `ERR_ARTIFACT_HASH_MISMATCH` (TRF-001, checked before unwrap so the specific code surfaces); `stream_len != sum(sizes)` or `total_chunks != ceil(stream_len/chunk_size)` (0 iff stream 0) → `ERR_MANIFEST_INVALID` (TRF-002/ART-020); OFFER past `expires_at` → `ERR_MESSAGE_EXPIRED` (TRF-005, strict, no skew grace); no wrap for self or unwrap failure → `ERR_DECRYPT_FAILED` (TRF-003); `cipher != chacha20poly1305` → `ERR_SUITE_UNSUPPORTED` (AES-256-GCM is OPTIONAL and unnegotiated in M5); `sealed_manifest`-only (TRF-004 privacy profile) → `ERR_UNSUPPORTED_EXTENSION` (unimplemented in M5); any non-empty `crit` → `ERR_UNSUPPORTED_EXTENSION` (GEN-012; M5 defines no extensions).
+- Full node signature + ancestry verification is deferred to VERIFYING (policy step 6, after transfer); at OFFER time only the claimed `content_root` equality is checked.
+
+## D-027: Receiver transport + dispatch boundaries (Task 8)
+
+- Outbound ACCEPT/REJECT/STATUS/RECEIPT are signed DSSE envelopes; sealing them for the wire is the M7 transport binding. In-memory callers pass envelopes directly.
+- The receiver dispatches OFFER and COMPLETE only; any other registry type received here (ACCEPT/STATUS/...) and any unknown type → `ERR_UNSUPPORTED_MESSAGE` (MSG-006).
+- A fresh msg id reusing a known `transfer_id` → `ERR_TRANSFER_NOT_FOUND` ("transfer_id already in use"): TRF-022 requires a new attempt to use a new `transfer_id` **and** CEK; resume of the same attempt travels via chunks + STATUS, never a second OFFER.
+- Beyond-window chunks (`index > contiguous + send_window_chunks - 1`, window 16) → `ERR_SEQUENCE_INVALID` (drop + error); duplicates → silent idempotent discard without re-processing (TRF-012, even with differing bytes); >100 consecutive AEAD failures → ABORTED.
+- Restart demotes in-flight ACCEPTED/RECEIVING records to PAUSED (section 8.4 "connection lost" row); `sender_due_chunks(have, total)` sends at most 16 unacknowledged chunks beyond contiguous have (TRF-024).
+- VERIFYING failure → signed RECEIPT `rejected` (+code), state REJECTED (node_id best-effort via `node_id_of`). Integrity pass → RECEIPT `accepted`; quarantine/scanner outcomes are M7 policy scope (always accept on integrity pass here).
+- `parent_policy=require` over a lazy DagStore is enforced by a post-add `ancestry_status == complete` check (else `ERR_INVALID_PARENT`).
+- M5 assumes `card_resolver` returns verified cards (rollback enforced at fetch via `verify_card`); per-message checks are pin trust + signature with the current key id + signing-key window (ID-014) + revocation (ID-024). Policy steps skipped entirely (no engine yet): grant chains, classification-vs-grant, SEC rules, scans (§10.2 steps 3,7,8,9).
+- Generated message ids are `msg_` + UUIDv4 (opaque GEN-006 shape; UUIDv7 clock-seq generation deferred, no behavioral difference on the wire).
