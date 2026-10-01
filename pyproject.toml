@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aatp"
+version = "0.2.0"
+requires-python = ">=3.11"
+dependencies = ["cryptography>=43", "pyhpke==0.6.5"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools]
+packages = ["aatp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
