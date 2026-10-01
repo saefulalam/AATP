@@ -212,6 +212,24 @@ def test_AUD001_clean_entry_accepted():
     assert isinstance(h, str) and len(log) == 1
 
 
+def test_AUD001_nested_secret_rejected():
+    from aatp.sec import audit_append
+    log = []
+    with pytest.raises(AATPError) as e:
+        audit_append(log, {"event": "x", "data": {"cek": "secret"}})
+    assert e.value.code == "ERR_MALFORMED_MESSAGE"
+    assert log == []
+
+
+def test_AUD001_nested_secret_in_list_rejected():
+    from aatp.sec import audit_append
+    log = []
+    with pytest.raises(AATPError) as e:
+        audit_append(log, {"event": "x", "items": [{"payload": "secret"}]})
+    assert e.value.code == "ERR_MALFORMED_MESSAGE"
+    assert log == []
+
+
 # --- AUD-002: hash chain ------------------------------------------------------------------
 
 def test_AUD002_hash_chain():

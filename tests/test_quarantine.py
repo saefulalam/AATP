@@ -80,6 +80,14 @@ def test_quarantine_suspicious_allowed_when_policy_off():
     assert q.place(CR1, N1, [_verdict(verdict="suspicious")])["state"] == "accepted"
 
 
+def test_quarantine_untrusted_malicious_quarantined_when_policy_off():
+    # Fail closed: qos=False gates ONLY suspicious; untrusted malicious
+    # always quarantines.
+    q = _q(quarantine_on_suspicious=False)
+    rec = q.place(CR1, N1, [_verdict(verdict="malicious")])
+    assert rec["state"] == "quarantined"
+
+
 # --- SEC-006: state labels never "malicious" ----------------------------------
 
 def test_SEC006_quarantined_not_malicious():

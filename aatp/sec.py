@@ -25,6 +25,22 @@ def _malformed(detail: str):
     return err("ERR_MALFORMED_MESSAGE", detail)
 
 
+def _audit_has_forbidden(obj) -> str | None:
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k in FORBIDDEN_AUDIT_KEYS:
+                return k
+            found = _audit_has_forbidden(v)
+            if found is not None:
+                return found
+    elif isinstance(obj, list):
+        for v in obj:
+            found = _audit_has_forbidden(v)
+            if found is not None:
+                return found
+    return None
+
+
 def delimit_for_model(text: str, source: str = "unknown") -> str:
     """SEC-001/003: fence artifact text as data (verbatim, never executed)."""
     if not isinstance(text, str):
@@ -82,9 +98,9 @@ def audit_append(log: list, entry: dict, *, prev_hash: str = "00" * 32) -> str:
         raise _malformed("entry must be an object")
     if not isinstance(prev_hash, str) or not _HASH_RE.match(prev_hash):
         raise _malformed("prev_hash must be 64 lowercase hex")
-    for k in entry.keys():
-        if k in FORBIDDEN_AUDIT_KEYS:
-            raise _malformed(f"audit entry must not carry {k!r}")
+    bad = _audit_has_forbidden(entry)
+    if bad is not None:
+        raise _malformed(f"audit entry must not carry {bad!r}")
     new_hash = hashlib.sha256(bytes.fromhex(prev_hash) + jcs(entry)).hexdigest()
     log.append({"entry": dict(entry), "prev_hash": prev_hash,
                 "entry_hash": new_hash})

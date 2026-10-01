@@ -70,7 +70,9 @@ class Quarantine:
         if any(v["verdict"] == "malicious" and v["scanner_name"] in self._trusted
                for v in clean):
             state = "rejected"
-        elif any(v["verdict"] in ("suspicious", "malicious") for v in clean):
+        elif any(v["verdict"] == "malicious" for v in clean):
+            state = "quarantined"
+        elif any(v["verdict"] == "suspicious" for v in clean):
             state = "quarantined" if self._qos else "accepted"
         elif not clean:
             state = "quarantined"
