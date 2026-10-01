@@ -20,7 +20,8 @@ VECTORS = {}
 
 def main():
     VECTORS["V02"] = {"sha256_hello": sha256_hex(b"hello"), "b64url_hello": b64u(b"hello")}
-    OUT.write_text(json.dumps(VECTORS, indent=2, sort_keys=True))
+    # write_bytes: avoid platform newline translation (vectors must be byte-exact).
+    OUT.write_bytes(json.dumps(VECTORS, indent=2, sort_keys=True).encode("utf-8"))
 
 
 if __name__ == "__main__":
