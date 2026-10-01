@@ -158,3 +158,11 @@ Gaps, ambiguities and implementation choices (blueprint §0.4). One entry per de
 - `parent_policy=require` over a lazy DagStore is enforced by a post-add `ancestry_status == complete` check (else `ERR_INVALID_PARENT`).
 - M5 assumes `card_resolver` returns verified cards (rollback enforced at fetch via `verify_card`); per-message checks are pin trust + signature with the current key id + signing-key window (ID-014) + revocation (ID-024). Policy steps skipped entirely (no engine yet): grant chains, classification-vs-grant, SEC rules, scans (§10.2 steps 3,7,8,9).
 - Generated message ids are `msg_` + UUIDv4 (opaque GEN-006 shape; UUIDv7 clock-seq generation deferred, no behavioral difference on the wire).
+
+## D-028: Task 9 conformance gate — Core M0-M5 green, no production claim
+
+- Full suite: 261 passed (`234` pre-existing + `27` gate in `tests/test_vectors.py`) via `.venv\Scripts\python -m pytest`. No `aatp/*.py` change in Task 9 (no drift found; generator untouched, JSON diff empty).
+- Regeneration: committed `tests/vectors/aatp_v0_2_vectors.json` regenerates byte-identical via `reference_vectors.main()` into a temp comparison (`write_bytes` LF, no CR, trailing newline; `.gitattributes` keeps `tests/vectors/*.json -text`). Closes ledger T0-1/T1-1 (vector-file-vs-implementation drift): V01/V02/V03/V04/V07/V08 implementation outputs assert equal to the JSON values (implementation modules vs JSON, not generator vs itself); V09 negative; V05-STRUCTURE present, labeled implementation-generated, grammar recomputed (`D_NODE + JCS(node1)` == `example_node_ids[0]`).
+- Per binding D-020: `tests/test_vectors.py` asserts NO blueprint V05/V06 strings anywhere; V05/V06 remain UNVERIFIABLE (vectors file absent).
+- Negatives: N01–N16 each green via their canonical tests (test-name → N-code map in `tests/test_vectors.py` comments); N17 revert-accepted + N18 cycle run the `test_node.py` ids `test_PRV004_revert_is_not_a_cycle` / `test_PRV003_self_ancestor_rejected` directly, not reimplemented.
+- Per blueprint §18.4 rule 6 (do not claim conformance until Core green AND CRY-007 review done) + §17 levels: Core M0-M5 is green BUT V05/V06-unverifiable and CRY-007 composition review stays OPEN → NO production conformance claim. Reference implementation only.
