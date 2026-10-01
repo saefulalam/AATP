@@ -185,6 +185,16 @@ Gaps, ambiguities and implementation choices (blueprint §0.4). One entry per de
 - Replay/idempotency: same decision twice → the stored envelope bytes verbatim (deep copy, JCS-identical); conflicting decision on ACCEPTED/REJECTED → `ERR_POLICY_DENIED` (blueprint silent, fail closed). Duplicate `offer` id and unknown `handoff_id` (`state_of`/`responsible`/`respond`) → `ERR_POLICY_DENIED`.
 - HND-006 audit only on accept: `{"handoff_id","task_id","decision":"accept","at":now}` per task; `audit_log` returns copies. `responsible(id)` = sender until ACCEPTED, then recipient.
 
+## D-032: Policy evaluation rule_id mapping + gate semantics (M6-3)
+
+- `aatp/policy.py:evaluate` is pure (no transfer wiring): steps are grant chain → manifest limits → `expires_at` → classification → consumption_mode; deny at first failure. Transfer integration (node/content_root checks, scans, quarantine) is M7 scope.
+- Step-1 `verify_chain` failures are mapped code → rule_id: `ERR_GRANT_ATTENUATION` → `AUT-002`, `ERR_GRANT_INVALID` → `AUT-004`, `ERR_POLICY_DENIED` (presenter/action-resource) → `AUT-006`, `ERR_MALFORMED_MESSAGE` → `GEN-010`; any other `AATPError` code (e.g. `ERR_AUTH_FAILED`/`ERR_SIGNATURE_INVALID` from key resolution/signature) → `AUT-001` (issuer trust failure). Only `AATPError` is caught; programming errors raise.
+- Step-2 manifest failures map to rule `ART-006` with the `validate_manifest` code passed through (`ERR_MANIFEST_INVALID` or `ERR_PATH_INVALID`).
+- Step-3 expiry is strict with no skew grace (`expires_at < now` denies with `MSG-003`/`ERR_MESSAGE_EXPIRED`; equality allows). Malformed `expires_at` → deny `GEN-010`/`ERR_MALFORMED_MESSAGE` (request data, fail closed); a malformed `now` raises (caller error).
+- Step-4 unknown/non-string `classification` → deny `GEN-010`/`ERR_MALFORMED_MESSAGE`; rank above leaf `constraints.classification_max` → deny `AUT-002`/`ERR_POLICY_DENIED`.
+- Step-5 `consumption_mode` absent defaults to `data_only` (skip); unknown values → deny `SEC-002`/`ERR_POLICY_DENIED` (fail closed at the gate). `instructions_allowed` requires a verified-leaf cap `{act: aatp.artifact.instruct, res_subset(resource, cap.res)}` (N22), else `SEC-002`/`ERR_POLICY_DENIED`.
+- Success returns the synthetic rule_id `POLICY-ALLOW` with `code None` (no blueprint rule id exists for the allow path).
+
 ## D-028: Task 9 conformance gate — Core M0-M5 green, no production claim
 
 - Full suite: 261 passed (`234` pre-existing + `27` gate in `tests/test_vectors.py`) via `.venv\Scripts\python -m pytest`. No `aatp/*.py` change in Task 9 (no drift found; generator untouched, JSON diff empty).
