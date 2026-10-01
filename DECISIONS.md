@@ -121,3 +121,11 @@ Gaps, ambiguities and implementation choices (blueprint §0.4). One entry per de
 
 - Non-`str` `content_root`/`transfer_id` in `aad()`/`encrypt_chunks()`/`decrypt_one()` → `ERR_CHUNK_AUTH_FAILED` (fail closed, avoids oracle distinguishing type errors from auth failures; `jcs` would otherwise accept ints/`None` or raise `ERR_MALFORMED_MESSAGE`).
 - `decrypt_one` maps any `decrypt` failure to `ERR_CHUNK_AUTH_FAILED` (`except InvalidTag` kept, plus `except Exception` net); AAD/nonce validation runs before the `try` so `ERR_SEQUENCE_INVALID` is never swallowed.
+
+## D-023: HPKE seal/wrap error mapping + KeyStore scope (MSG-010..013, ENC-020..023, Task 7)
+
+- pyhpke 0.6.5 concrete open-failure type (ledger T0-2): `pyhpke.exceptions.OpenError("Failed to open.")` for all recipient-open failures probed (tampered `ct`, tampered `enc`, wrong `info`). `KeyStore.open` / `open_packet` / `unwrap_cek` map it (and any other exception) to `ERR_DECRYPT_FAILED`, fail closed. `cryptography.exceptions.InvalidTag` is the inner cause one layer down.
+- `KeyStore` here is a minimal in-memory map `enc_key_id -> raw 32-byte X25519 private key` with `open(enc_key_id, enc, ct, info) -> bytes`; unknown key id (and any type/shape failure inside `open`) → `ERR_DECRYPT_FAILED`, never `KeyError`/raw. Full OS/file-backed keystore with ID-012 validity windows is M7+ scope.
+- CRY-006: test recipient keys use `cryptography` `X25519PrivateKey.generate()` (OpenSSL OS CSPRNG), same basis as `SoftwareSigner.generate()`; no fixed HPKE vectors per blueprint §9 (RFC 9180 A.2.1 already gated in Task 0).
+- MSG-013 scope: `max_message_bytes=262144` measured on `JCS(dsse_envelope)` plaintext bytes; `seal_packet` rejects oversize with `ERR_SIZE_LIMIT` before sealing.
+- Wrap `pt` is the raw 32-byte CEK (not JCS); `wrap_cek` signature carries `transfer_id` explicitly since `info_r` binds it (`cr/s/r/t/k` short keys per §9.2). `open_packet` rebuilds `info` from packet `to`/`to_key_id` only, never inner message.
