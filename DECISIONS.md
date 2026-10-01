@@ -195,6 +195,20 @@ Gaps, ambiguities and implementation choices (blueprint §0.4). One entry per de
 - Step-5 `consumption_mode` absent defaults to `data_only` (skip); unknown values → deny `SEC-002`/`ERR_POLICY_DENIED` (fail closed at the gate). `instructions_allowed` requires a verified-leaf cap `{act: aatp.artifact.instruct, res_subset(resource, cap.res)}` (N22), else `SEC-002`/`ERR_POLICY_DENIED`.
 - Success returns the synthetic rule_id `POLICY-ALLOW` with `code None` (no blueprint rule id exists for the allow path).
 
+## D-033: M7-1 quarantine verdict mapping (SEC-006/007, Task M7-1)
+
+- `Quarantine.place` default: all-clean → `accepted` (blueprint §8.4: VERIFYING + scan clean + policy allow → RECEIPT accepted); any `suspicious` → `quarantined` (default `quarantine_on_suspicious=True`; `False` → `accepted`); any `malicious` from a scanner in `trusted_scanners` (default empty set) → `rejected`; untrusted `malicious` → `quarantined` (scanners are policy dependencies, never trusted subsystems); empty verdict list → `quarantined` (fail closed, no scan evidence).
+- SEC-006: `state_of` returns only `{content_root, node_id, state, released_by?, at?}` — verdicts are excluded so the word "malicious" can never appear in state output; scanner detail lives in `verdicts_of` (SEC-007, exact `{scanner_name, scanner_version, verdict, at}` with GEN-004 `at` via `messages.parse_ts`).
+- `release` only transitions `quarantined → accepted`, requires `released_by ∈ authorized_releasers` else `ERR_POLICY_DENIED`, records `released_by + at` (GEN-004); unknown root → `ERR_ARTIFACT_NOT_FOUND`; releasing `accepted`/`rejected` → `ERR_POLICY_DENIED`.
+
+## D-034: M7-1 sec/audit semantics (SEC-003/004/005, AUD-001/002, Task M7-1)
+
+- `delimit_for_model(text, source)` emits `<<<AATP-DATA source=<source>>>\n{text}\n<<<END-AATP-DATA>>>` with `text` embedded verbatim. Delimiting ≠ sanitizing: hostile text (even a forged end-fence) is carried unchanged, only marked data-only (SEC-001/003). `source` must be an `agent_id` or `"unknown"`, else `ERR_MALFORMED_MESSAGE`.
+- `quote_filename` is `shlex.quote` verbatim (SEC-005).
+- `tool_allowed` re-authorizes with `policy.evaluate(action=tool_action, resource=resource, consumption_mode="data_only", ...)` against the agent's own grant chain (SEC-004, N21 groundwork: full tool test in M7-3; here unit-level False without cap). Returns bool; catches `AATPError` → `False` (deny never raises); programming errors propagate.
+- AUD-001 guard rejects top-level keys `{"cek", "private_key", "plaintext", "payload", "plaintext_bytes"}` with `ERR_MALFORMED_MESSAGE` (fail closed; log untouched on reject).
+- AUD-002: `entry_hash = SHA256(bytes.fromhex(prev_hash) + JCS(entry))` (raw 32-byte prev hash, not ASCII hex); `prev_hash` must be 64 lowercase hex (default `"00"*32`); `audit_append` appends `{"entry", "prev_hash", "entry_hash"}` and returns the new hash.
+
 ## D-028: Task 9 conformance gate — Core M0-M5 green, no production claim
 
 - Full suite: 261 passed (`234` pre-existing + `27` gate in `tests/test_vectors.py`) via `.venv\Scripts\python -m pytest`. No `aatp/*.py` change in Task 9 (no drift found; generator untouched, JSON diff empty).
