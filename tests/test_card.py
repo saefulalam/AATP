@@ -364,6 +364,139 @@ def test_nondict_payload_rejected(tmp_path):
     assert _code(verify_card, env, agent_id, _cache(tmp_path), NOW) == "ERR_MALFORMED_MESSAGE"
 
 
+# strict version (card requires explicit "0.2"; rotation/revocation must too)
+
+def test_ID_version_rotation_missing_v_rejected(tmp_path):
+    agent_id, card, (g, s1, s2) = _rotated_card()
+    d = _rotation_dict(agent_id, "k0", "k1", s1.public_key_raw(),
+                       next_c=_commit(s2.public_key_raw()))
+    del d["v"]
+    card["key_history"] = [_rotation_env(g, d), card["key_history"][1]]
+    env = _sign_card(card, s2)
+    assert _code(verify_card, env, agent_id, _cache(tmp_path), NOW) == "ERR_PROTOCOL_VERSION"
+
+
+def test_ID_version_rotation_wrong_v_rejected(tmp_path):
+    agent_id, card, (g, s1, s2) = _rotated_card()
+    d = _rotation_dict(agent_id, "k0", "k1", s1.public_key_raw(),
+                       next_c=_commit(s2.public_key_raw()))
+    d["v"] = "0.3"
+    card["key_history"] = [_rotation_env(g, d), card["key_history"][1]]
+    env = _sign_card(card, s2)
+    assert _code(verify_card, env, agent_id, _cache(tmp_path), NOW) == "ERR_PROTOCOL_VERSION"
+
+
+def test_ID_version_revocation_missing_v_rejected(tmp_path):
+    g, s1 = _genesis(), _signer(K1_SEED, "k1")
+    agent_id = _agent_id()
+    r0 = _rotation_env(g, _rotation_dict(agent_id, "k0", "k1", s1.public_key_raw()))
+    d = _revoke_dict(agent_id, "k0", ISSUED)
+    del d["v"]
+    rev = make_envelope(PT_ROTATION, jcs(d), s1)
+    card = _base_card(seq=2, signing=_key_entry("k1", s1.public_key_raw()),
+                      history=[r0], revoked=[rev])
+    env = _sign_card(card, s1)
+    assert _code(verify_card, env, agent_id, _cache(tmp_path), NOW) == "ERR_PROTOCOL_VERSION"
+
+
+def test_ID_version_revocation_wrong_v_rejected(tmp_path):
+    g, s1 = _genesis(), _signer(K1_SEED, "k1")
+    agent_id = _agent_id()
+    r0 = _rotation_env(g, _rotation_dict(agent_id, "k0", "k1", s1.public_key_raw()))
+    d = _revoke_dict(agent_id, "k0", ISSUED)
+    d["v"] = "0.3"
+    rev = make_envelope(PT_ROTATION, jcs(d), s1)
+    card = _base_card(seq=2, signing=_key_entry("k1", s1.public_key_raw()),
+                      history=[r0], revoked=[rev])
+    env = _sign_card(card, s1)
+    assert _code(verify_card, env, agent_id, _cache(tmp_path), NOW) == "ERR_PROTOCOL_VERSION"
+
+
+# ID-020/022 card-vs-history commitment equality
+
+def test_ID020_card_commitment_divergence_rejected(tmp_path):
+    g, s1, s2 = _genesis(), _signer(K1_SEED, "k1"), _signer(K2_SEED, "k2")
+    agent_id = _agent_id()
+    k3_pub = bytes([0x55]) * 32
+    c2 = _commit(s2.public_key_raw())
+    c3 = _commit(k3_pub)
+    r0 = _rotation_env(g, _rotation_dict(agent_id, "k0", "k1",
+                                         s1.public_key_raw(), next_c=c2))
+    r1 = _rotation_env(s1, _rotation_dict(agent_id, "k1", "k2",
+                                          s2.public_key_raw(), next_c=c3))
+    card = _base_card(signing=_key_entry("k2", s2.public_key_raw()),
+                      history=[r0, r1], next_c="sha256:" + "ff" * 32)
+    env = _sign_card(card, s2)
+    assert _code(verify_card, env, agent_id, _cache(tmp_path), NOW) == "ERR_KEY_COMMITMENT_MISMATCH"
+
+
+def test_ID020_card_commitment_equality_accepted(tmp_path):
+    g, s1, s2 = _genesis(), _signer(K1_SEED, "k1"), _signer(K2_SEED, "k2")
+    agent_id = _agent_id()
+    k3_pub = bytes([0x55]) * 32
+    c2 = _commit(s2.public_key_raw())
+    c3 = _commit(k3_pub)
+    r0 = _rotation_env(g, _rotation_dict(agent_id, "k0", "k1",
+                                         s1.public_key_raw(), next_c=c2))
+    r1 = _rotation_env(s1, _rotation_dict(agent_id, "k1", "k2",
+                                          s2.public_key_raw(), next_c=c3))
+    card = _base_card(signing=_key_entry("k2", s2.public_key_raw()),
+                      history=[r0, r1], next_c=c3)
+    env = _sign_card(card, s2)
+    assert verify_card(env, agent_id, _cache(tmp_path), NOW)["seq"] == 1
+
+
+# check_key_not_revoked re-verification (fail closed)
+
+def test_ID024_forged_revocation_not_trusted(tmp_path):
+    agent_id = _agent_id()
+    g = _genesis()
+    attacker = _signer(K2_SEED, "kX")
+    forged = make_envelope(PT_ROTATION, jcs(_revoke_dict(agent_id, "k0", ISSUED)), attacker)
+    card = _base_card(revoked=[forged])
+    assert _code(check_key_not_revoked, card, "k0", NOW) == "ERR_SIGNATURE_INVALID"
+    assert _code(verify_card, _sign_card(card, g), agent_id,
+                _cache(tmp_path), NOW) == "ERR_SIGNATURE_INVALID"
+
+
+def test_ID024_stripped_revocation_signature_rejected():
+    agent_id = _agent_id()
+    g = _genesis()
+    rev = make_envelope(PT_ROTATION, jcs(_revoke_dict(agent_id, "k0", ISSUED)), g)
+    stripped = dict(rev)
+    stripped["signatures"] = []
+    card = _base_card(revoked=[stripped])
+    assert _code(check_key_not_revoked, card, "k0", NOW) == "ERR_MALFORMED_MESSAGE"
+
+
+def test_ID024_tampered_revocation_effective_at_rejected():
+    import copy
+    from aatp.b64 import b64u_dec
+    from aatp.canon import parse_jcs
+    g = _genesis()
+    agent_id = _agent_id()
+    rev = make_envelope(PT_ROTATION, jcs(_revoke_dict(agent_id, "k0", ISSUED)), g)
+    tampered = copy.deepcopy(rev)
+    payload = parse_jcs(b64u_dec(rev["payload"]))
+    payload["effective_at"] = NOW
+    tampered["payload"] = b64u(jcs(payload))
+    card = _base_card(revoked=[tampered])
+    assert _code(check_key_not_revoked, card, "k0", NOW) == "ERR_SIGNATURE_INVALID"
+
+
+def test_ID024_next_commitment_revocation_checked_by_helper(tmp_path):
+    agent_id, card, (g, s1, s2) = _rotated_card()
+    c2 = _commit(s2.public_key_raw())
+    card["next_commitment"] = c2
+    rev = make_envelope(PT_ROTATION,
+                        jcs(_revoke_dict(agent_id, "k1", ISSUED, pub=s2.public_key_raw())), s2)
+    card["revoked"] = [rev]
+    card["seq"] = 2
+    out = verify_card(_sign_card(card, s2), agent_id, _cache(tmp_path), NOW)
+    assert _code(check_key_not_revoked, out, "k1", NOW) == "ERR_KEY_REVOKED"
+    check_key_not_revoked(out, "k1", "2026-09-30T00:00:00Z")
+
+
 # helpers
 
 def test_make_rotation_statement_verifiable():

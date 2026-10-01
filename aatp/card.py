@@ -196,7 +196,7 @@ def _check_card_shape(card: dict) -> None:
 
 
 def _check_revocation_shape(rev: dict, agent_id: str) -> tuple[str, datetime]:
-    if rev.get("v", "0.2") != "0.2":
+    if rev.get("v") != "0.2":
         raise err("ERR_PROTOCOL_VERSION", "revocation v must be 0.2")
     if rev.get("type") != "revoke":
         raise _malformed("revocation type must be revoke")
@@ -207,6 +207,33 @@ def _check_revocation_shape(rev: dict, agent_id: str) -> tuple[str, datetime]:
     if not isinstance(rev.get("reason"), str):
         raise _malformed("revocation needs string reason")
     return rev["key_id"], _parse_ts(rev.get("effective_at"))
+
+
+def _resolve_active_commitment(card: dict, chain_commitment: str | None) -> str | None:
+    card_nc = card.get("next_commitment")
+    if card_nc is not None:
+        if not isinstance(card_nc, str) or not _DIGEST_RE.match(card_nc):
+            raise _malformed("card next_commitment malformed")
+    if card_nc is not None and chain_commitment is not None and card_nc != chain_commitment:
+        raise err("ERR_KEY_COMMITMENT_MISMATCH", "card next_commitment diverges from history")
+    return card_nc if card_nc is not None else chain_commitment
+
+
+def _chain_commitment(card: dict) -> str | None:
+    hist = card.get("key_history")
+    if not isinstance(hist, list):
+        raise _malformed("key_history must be a list")
+    if not hist:
+        return None
+    last = hist[-1]
+    if not isinstance(last, dict):
+        raise _malformed("key_history entry must be a DSSE envelope")
+    payload = _decode_payload(last, "rotation")
+    nc = payload.get("next_commitment")
+    if nc is not None:
+        if not isinstance(nc, str) or not _DIGEST_RE.match(nc):
+            raise _malformed("rotation next_commitment malformed")
+    return nc
 
 
 def verify_card(card_env: dict, pinned_agent_id: str | None, cache: CardCache,
@@ -239,7 +266,7 @@ def verify_card(card_env: dict, pinned_agent_id: str | None, cache: CardCache,
         stmt = verify_envelope(stmt_env, PT_ROTATION, cur_pub, key_id=cur_id)
         if not isinstance(stmt, dict):
             raise _malformed("rotation payload must be a JSON object")
-        if stmt.get("v", "0.2") != "0.2":
+        if stmt.get("v") != "0.2":
             raise err("ERR_PROTOCOL_VERSION", "rotation v must be 0.2")
         if stmt.get("type") != "rotate":
             raise _malformed("rotation type must be rotate")
@@ -296,7 +323,7 @@ def verify_card(card_env: dict, pinned_agent_id: str | None, cache: CardCache,
     if seq < cache.highest_seq(card["agent_id"]):
         raise err("ERR_CARD_ROLLBACK", "card seq below cached highest")
 
-    active_commitment = card.get("next_commitment") or commitment
+    active_commitment = _resolve_active_commitment(card, commitment)
     revoked: list[tuple[str, datetime]] = []
     for rev_env in card.get("revoked") or []:
         rev = None
@@ -328,10 +355,40 @@ def verify_card(card_env: dict, pinned_agent_id: str | None, cache: CardCache,
 
 
 def check_key_not_revoked(card: dict, key_id: str, created_at: str) -> None:
+    if not isinstance(card, dict):
+        raise _malformed("card must be an object")
+    agent_id = card.get("agent_id")
+    if not isinstance(agent_id, str) or not _AGENT_RE.match(agent_id):
+        raise _malformed("card agent_id malformed")
+    sign_id, sign_pub, _, _ = _key_record(card.get("signing_key"), "signing_key")
+    if not isinstance(key_id, str):
+        raise _malformed("key_id must be a string")
     created = _parse_ts(created_at)
-    for rev_env in card.get("revoked") or []:
+    chain_nc = _chain_commitment(card)
+    active = _resolve_active_commitment(card, chain_nc)
+    revoked_envs = card.get("revoked") or []
+    if not isinstance(revoked_envs, list):
+        raise _malformed("revoked must be a list")
+    for rev_env in revoked_envs:
         if not isinstance(rev_env, dict):
             raise _malformed("revoked entry must be a DSSE envelope")
-        rev = _decode_payload(rev_env, "revocation")
-        if rev.get("key_id") == key_id and _parse_ts(rev.get("effective_at")) <= created:
+        rev = None
+        try:
+            rev = verify_envelope(rev_env, PT_ROTATION, sign_pub, key_id=sign_id)
+        except AATPError as e:
+            if e.code != "ERR_SIGNATURE_INVALID":
+                raise
+            if active is None:
+                raise
+            cand = _decode_payload(rev_env, "revocation")
+            if not isinstance(cand.get("public_key"), str):
+                raise err("ERR_SIGNATURE_INVALID", "no usable revocation signature") from None
+            cand_pub = _pub_raw(cand["public_key"], "revocation.public_key")
+            if _commitment(cand_pub) != active:
+                raise err("ERR_SIGNATURE_INVALID", "revocation key not committed") from None
+            rev = verify_envelope(rev_env, PT_ROTATION, cand_pub)
+        if not isinstance(rev, dict):
+            raise _malformed("revocation payload must be a JSON object")
+        rid, reff = _check_revocation_shape(rev, agent_id)
+        if rid == key_id and reff <= created:
             raise err("ERR_KEY_REVOKED", "key revoked before message creation")

@@ -58,7 +58,7 @@ Gaps, ambiguities and implementation choices (blueprint §0.4). One entry per de
 ## D-010: Revocation by the next-commitment key (ID-023, Task 3)
 
 - The blueprint does not say how the verifier obtains the next key's public key. `make_revocation` accepts optional `public_key_raw32` (emitted as `public_key` b64url, an allowed unknown-optional field per GEN-012) and `verify_card` uses it only on the second path: current-key verification is tried first (strict `key_id` binding); on `ERR_SIGNATURE_INVALID` it requires `sha256(public_key) == active commitment` and verifies `signatures[0]` with it. Without a matching `public_key` the second path fails closed with `ERR_SIGNATURE_INVALID`.
-- Active commitment = `card.next_commitment` if present else the last rotation's `next_commitment` (no equality required between the two, so a card may publish fresh pre-rotation without a new history entry).
+- Active commitment: `card.next_commitment` if present else the last rotation's `next_commitment`. Per blueprint ID-020 ("if the previous statement (or Card) carried `next_commitment`, then `sha256(to_public_key)` MUST equal it"), when both are present they MUST be equal, else `ERR_KEY_COMMITMENT_MISMATCH` (strict equality, fail closed; a card may not publish a divergent fresh pre-rotation while old history is still present).
 
 ## D-011: Revocation envelope carries `v: "0.2"` (Task 3)
 
@@ -66,7 +66,7 @@ Gaps, ambiguities and implementation choices (blueprint §0.4). One entry per de
 
 ## D-012: Revocation timing checks (ID-024, Task 3)
 
-- `verify_card` rejects a card whose *current* signing key is revoked with `effective_at <= now` (`ERR_KEY_REVOKED`). `check_key_not_revoked(card, key_id, created_at)` (for M5 message checks) raises `ERR_KEY_REVOKED` iff some entry matches `key_id` with `effective_at <= created_at`; it trusts `verify_card` output and does not re-verify revocation signatures — callers must pass verified cards. The "created before revocation but received after learning of it" policy exception is M5 policy scope; M1 implements the strict comparison.
+- `verify_card` rejects a card whose *current* signing key is revoked with `effective_at <= now` (`ERR_KEY_REVOKED`). `check_key_not_revoked(card, key_id, created_at)` (for M5 message checks) raises `ERR_KEY_REVOKED` iff some entry matches `key_id` with `effective_at <= created_at`; it re-verifies every revocation envelope signature (current-key first with strict `key_id` binding, then commitment-key second path identical to `verify_card`, including strict `v == "0.2"` shape checks) and fails closed (`ERR_SIGNATURE_INVALID`/`ERR_MALFORMED_MESSAGE`/`ERR_KEY_COMMITMENT_MISMATCH`) on any forged/tampered/stripped entry — callers must still pass `verify_card` output directly, since wholesale removal of the `revoked` list itself is not detectable by the helper alone. The "created before revocation but received after learning of it" policy exception is M5 policy scope; M1 implements the strict comparison.
 
 ## D-013: Task 2 follow-up confined to Task 3 (non-dict payloads)
 
