@@ -89,7 +89,7 @@ def _offer_body(leaf_env, resource=RESOURCE, lease=T_LEASE,
 
 def _offer(store, leaf_env, chain_envs, **kw):
     body = _offer_body(leaf_env, **kw)
-    store.offer(body, T_NOW, grant_chain_envs=chain_envs,
+    store.offer(body, chain_envs, T_NOW,
                 sender=ALICE, recipient=BOB, roots={OWNER},
                 key_resolver=_resolver())
     return body
@@ -227,10 +227,23 @@ def test_HND_malformed_body_rejected():
     body = _offer_body(leaf_env)
     body["input_node_ids"] = ["not-a-digest"]
     with pytest.raises(AATPError) as ei:
-        store.offer(body, T_NOW, grant_chain_envs=chain,
+        store.offer(body, chain, T_NOW,
                     sender=ALICE, recipient=BOB, roots={OWNER},
                     key_resolver=_resolver())
     assert ei.value.code == "ERR_MALFORMED_MESSAGE"
+
+
+def test_HND005_reject_with_constraints_succeeds():
+    store = HandoffStore()
+    leaf_env, chain = _std_chain()
+    _offer(store, leaf_env, chain, constraints={"mode": "supervised"})
+    env = store.respond("handoff_1", "reject", T_NOW,
+                        responder=BOB, signer=_SIGNERS[BOB])
+    assert store.state_of("handoff_1") == "REJECTED"
+    assert store.audit_log("task_1") == []
+    msg = validate_message(verify_envelope(env, PT_MESSAGE,
+                                           _SIGNERS[BOB].public_key_raw()))
+    assert msg["body"]["decision"] == "reject"
 
 
 def test_HND_reject_flow_no_audit_sender_responsible():

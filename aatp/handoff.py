@@ -85,7 +85,7 @@ class HandoffStore:
         self._offers: dict[str, dict] = {}
         self._audit: dict[str, list] = {}
 
-    def offer(self, handoff: dict, now: str, grant_chain_envs=None, *,
+    def offer(self, handoff: dict, grant_chain_envs=None, now: str = "", *,
               sender: str, recipient: str, roots, key_resolver) -> None:
         """Validate a HANDOFF_OFFER body and store it PENDING."""
         body = _check_body(handoff)
@@ -132,7 +132,7 @@ class HandoffStore:
         if parse_ts(now) > parse_ts(rec["lease_expires_at"]):
             rec["state"] = "VOID"
             raise err("ERR_LEASE_EXPIRED", "lease expired before response")
-        if rec["constraints"] and conditions != rec["constraints"]:
+        if decision == "accept" and rec["constraints"] and conditions != rec["constraints"]:
             raise err("ERR_POLICY_DENIED", "offer constraints not satisfied")
         body = {"handoff_id": handoff_id, "decision": decision}
         if code is not None:
