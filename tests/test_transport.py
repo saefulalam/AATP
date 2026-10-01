@@ -299,6 +299,257 @@ def test_oversize_packet_and_chunk_mapping():
         assert getattr(e, "code", "") == "ERR_RATE_LIMIT"
 
 
+def test_mailbox_auth_unknown_agent_401():
+    from aatp.transport.relay import Relay
+    from aatp.transport.http import serve
+    s, aid = _agent(0xB1, "k1")
+    relay = Relay()
+    server = serve(relay, host="127.0.0.1", port=0,
+                   card_resolver=lambda a: (_ for _ in ()).throw(KeyError(a)))
+    _run_server(server)
+    try:
+        base = _base_url(server)
+        path = f"/aatp/v0.2/mailbox/{aid}"
+        auth = _auth_header(s, aid, path, _now_ts())
+        st, _, _ = _http("GET", base + path,
+                         headers={"Authorization": auth})
+        assert st == 401
+    finally:
+        server.shutdown()
+
+
+def test_mailbox_auth_tampered_sig_401():
+    from aatp.transport.relay import Relay
+    from aatp.transport.http import serve
+    s, aid = _agent(0xB2, "k1")
+    card_env = _card_for(s, aid)
+    cards = {aid: parse_jcs(b64u_dec(card_env["payload"]))}
+    relay = Relay()
+    server = serve(relay, host="127.0.0.1", port=0,
+                   card_resolver=lambda a: cards[a])
+    _run_server(server)
+    try:
+        base = _base_url(server)
+        path = f"/aatp/v0.2/mailbox/{aid}"
+        payload = jcs({"method": "GET", "path": path,
+                       "created_at": _now_ts(), "agent_id": aid})
+        env = make_envelope(PT_MESSAGE, payload, s)
+        sig_raw = bytearray(b64u_dec(env["signatures"][0]["sig"]))
+        assert len(sig_raw) == 64
+        sig_raw[0] ^= 0xFF
+        env["signatures"][0]["sig"] = b64u(bytes(sig_raw))
+        auth = "DSSE " + b64u(jcs(env))
+        st, _, _ = _http("GET", base + path,
+                         headers={"Authorization": auth})
+        assert st == 401
+    finally:
+        server.shutdown()
+
+
+def test_mailbox_auth_malformed_token_401():
+    from aatp.transport.relay import Relay
+    from aatp.transport.http import serve
+    s, aid = _agent(0xB3, "k1")
+    relay = Relay()
+    server = serve(relay, host="127.0.0.1", port=0,
+                   card_resolver=lambda a: (_ for _ in ()).throw(KeyError(a)))
+    _run_server(server)
+    try:
+        base = _base_url(server)
+        path = f"/aatp/v0.2/mailbox/{aid}"
+        st, _, _ = _http("GET", base + path)
+        assert st == 401
+        st, _, _ = _http("GET", base + path,
+                         headers={"Authorization": "DSSE not-base64!!!"})
+        assert st == 401
+    finally:
+        server.shutdown()
+
+
+def test_mailbox_auth_path_tamper_401():
+    from aatp.transport.relay import Relay
+    from aatp.transport.http import serve
+    s, aid = _agent(0xB4, "k1")
+    card_env = _card_for(s, aid)
+    cards = {aid: parse_jcs(b64u_dec(card_env["payload"]))}
+    relay = Relay()
+    server = serve(relay, host="127.0.0.1", port=0,
+                   card_resolver=lambda a: cards[a])
+    _run_server(server)
+    try:
+        base = _base_url(server)
+        path = f"/aatp/v0.2/mailbox/{aid}"
+        auth = _auth_header(s, aid, "/aatp/v0.2/mailbox/OTHER", _now_ts())
+        st, _, _ = _http("GET", base + path,
+                         headers={"Authorization": auth})
+        # implementation returns 401 on path binding mismatch (not 403)
+        assert st == 401
+    finally:
+        server.shutdown()
+
+
+def test_mailbox_auth_wrong_payload_type_401():
+    from aatp.transport.relay import Relay
+    from aatp.transport.http import serve
+    s, aid = _agent(0xB5, "k1")
+    card_env = _card_for(s, aid)
+    cards = {aid: parse_jcs(b64u_dec(card_env["payload"]))}
+    relay = Relay()
+    server = serve(relay, host="127.0.0.1", port=0,
+                   card_resolver=lambda a: cards[a])
+    _run_server(server)
+    try:
+        base = _base_url(server)
+        path = f"/aatp/v0.2/mailbox/{aid}"
+        payload = jcs({"method": "GET", "path": path,
+                       "created_at": _now_ts(), "agent_id": aid})
+        env = make_envelope(PT_CARD, payload, s)
+        auth = "DSSE " + b64u(jcs(env))
+        st, _, _ = _http("GET", base + path,
+                         headers={"Authorization": auth})
+        assert st == 401
+    finally:
+        server.shutdown()
+
+
+def test_post_relay_full_429():
+    from aatp.transport.relay import Relay
+    from aatp.transport.http import serve
+    relay = Relay(max_stored_packets=1)
+    server = serve(relay, host="127.0.0.1", port=0,
+                   card_resolver=lambda a: (_ for _ in ()).throw(KeyError(a)))
+    _run_server(server)
+    try:
+        base = _base_url(server)
+        s, aid = _agent(0xC1, "k1")
+        from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+        from cryptography.hazmat.primitives import serialization
+        sk = X25519PrivateKey.generate()
+        pk = sk.public_key().public_bytes(serialization.Encoding.Raw,
+                                          serialization.PublicFormat.Raw)
+        p1 = _sealed_packet(aid, "e1", pk, s,
+                            body_extra={"transfer_id": "tx_full1"})
+        p2 = _sealed_packet(aid, "e1", pk, s,
+                            body_extra={"transfer_id": "tx_full2"})
+        st, _, _ = _http("POST", base + "/aatp/v0.2/packets", body=jcs(p1),
+                         headers={"Content-Type": "application/json"})
+        assert st == 202
+        st, raw, _ = _http("POST", base + "/aatp/v0.2/packets", body=jcs(p2),
+                           headers={"Content-Type": "application/json"})
+        assert st == 429
+        assert json.loads(raw.decode())["code"] == "ERR_RATE_LIMIT"
+    finally:
+        server.shutdown()
+
+
+def test_post_malformed_400():
+    from aatp.transport.relay import Relay
+    from aatp.transport.http import serve
+    relay = Relay()
+    server = serve(relay, host="127.0.0.1", port=0,
+                   card_resolver=lambda a: (_ for _ in ()).throw(KeyError(a)))
+    _run_server(server)
+    try:
+        base = _base_url(server)
+        st, raw, _ = _http("POST", base + "/aatp/v0.2/packets", body=jcs({}),
+                           headers={"Content-Type": "application/json"})
+        assert st == 400
+        assert json.loads(raw.decode())["code"] == "ERR_MALFORMED_MESSAGE"
+        st, raw, _ = _http("POST", base + "/aatp/v0.2/packets",
+                           body=b"\x00\x01 not json",
+                           headers={"Content-Type": "application/json"})
+        assert st == 400
+        assert json.loads(raw.decode())["code"] == "ERR_MALFORMED_MESSAGE"
+    finally:
+        server.shutdown()
+
+
+def test_redelivery_drain_fifo():
+    from aatp.transport.relay import Relay
+    from aatp.transport.http import serve
+    sS, _ = _agent(0xD1, "kS")
+    sR, aidR = _agent(0xD2, "kR")
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+    from cryptography.hazmat.primitives import serialization
+    sk = X25519PrivateKey.generate()
+    pk = sk.public_key().public_bytes(serialization.Encoding.Raw,
+                                      serialization.PublicFormat.Raw)
+    relay = Relay()
+    cardR = _card_for(sR, aidR)
+    cards = {aidR: parse_jcs(b64u_dec(cardR["payload"]))}
+    server = serve(relay, host="127.0.0.1", port=0,
+                   card_resolver=lambda a: cards[a])
+    _run_server(server)
+    try:
+        base = _base_url(server)
+        path = f"/aatp/v0.2/mailbox/{aidR}"
+        pkt1 = _sealed_packet(aidR, "e1", pk, sS,
+                              body_extra={"transfer_id": "tx_dup"})
+        st, raw, _ = _http("POST", base + "/aatp/v0.2/packets",
+                           body=jcs(pkt1),
+                           headers={"Content-Type": "application/json"})
+        assert st == 202
+        id1 = json.loads(raw.decode())["id"]
+        st, raw, _ = _http("POST", base + "/aatp/v0.2/packets",
+                           body=jcs(pkt1),
+                           headers={"Content-Type": "application/json"})
+        assert st == 202
+        assert json.loads(raw.decode())["id"] == id1
+        auth = _auth_header(sR, aidR, path, _now_ts())
+        st, raw, _ = _http("GET", base + path,
+                           headers={"Authorization": auth})
+        assert st == 200
+        got = json.loads(raw.decode())
+        assert len(got) == 1
+        assert jcs(got[0]) == jcs(pkt1)
+        pktA = _sealed_packet(aidR, "e1", pk, sS,
+                              body_extra={"transfer_id": "tx_fifo1"})
+        pktB = _sealed_packet(aidR, "e1", pk, sS,
+                              body_extra={"transfer_id": "tx_fifo2"})
+        for pkt in (pktA, pktB):
+            st, _, _ = _http("POST", base + "/aatp/v0.2/packets",
+                             body=jcs(pkt),
+                             headers={"Content-Type": "application/json"})
+            assert st == 202
+        auth = _auth_header(sR, aidR, path, _now_ts())
+        st, raw, _ = _http("GET", base + path,
+                           headers={"Authorization": auth})
+        assert st == 200
+        got = json.loads(raw.decode())
+        assert len(got) == 2
+        assert jcs(got[0]) == jcs(pktA)
+        assert jcs(got[1]) == jcs(pktB)
+        st, _, _ = _http("POST", base + "/aatp/v0.2/packets",
+                         body=jcs(pktA),
+                         headers={"Content-Type": "application/json"})
+        assert st == 202
+        auth = _auth_header(sR, aidR, path, _now_ts())
+        st, raw, _ = _http("GET", base + path,
+                           headers={"Authorization": auth})
+        assert st == 200
+        got = json.loads(raw.decode())
+        assert len(got) == 1
+        assert jcs(got[0]) == jcs(pktA)
+    finally:
+        server.shutdown()
+
+
+def test_card_negatives_relay():
+    from aatp.transport.relay import Relay
+    s, aid = _agent(0xE1, "k1")
+    relay = Relay()
+    try:
+        relay.put_card(aid, {"signatures": []})
+        assert False, "expected ERR_MALFORMED_MESSAGE"
+    except Exception as e:
+        assert getattr(e, "code", "") == "ERR_MALFORMED_MESSAGE"
+    card_env = _card_for(s, aid)
+    bad = dict(card_env)
+    bad["signatures"] = [{"keyid": "k1", "sig": b64u(b"\x00" * 5)}]
+    relay.put_card(aid, bad)
+    assert jcs(relay.get_card(aid)) == jcs(bad)
+
+
 def test_NET001_no_tls_dependency_sealed_opaque():
     from aatp.transport.relay import Relay
     from aatp.seal import seal_packet
