@@ -159,6 +159,21 @@ Gaps, ambiguities and implementation choices (blueprint §0.4). One entry per de
 - M5 assumes `card_resolver` returns verified cards (rollback enforced at fetch via `verify_card`); per-message checks are pin trust + signature with the current key id + signing-key window (ID-014) + revocation (ID-024). Policy steps skipped entirely (no engine yet): grant chains, classification-vs-grant, SEC rules, scans (§10.2 steps 3,7,8,9).
 - Generated message ids are `msg_` + UUIDv4 (opaque GEN-006 shape; UUIDv7 clock-seq generation deferred, no behavioral difference on the wire).
 
+## D-029: Grant shape is fail-closed exact (AUT-002, Task M6-1)
+
+- `aatp/grants.py:_check_grant_shape` requires exactly the §10.1 keys `{v,iss,aud,cap,nbf,exp,prf,constraints}` (no extras, none missing), cap entries exactly `{act,res}`, constraints exactly `{classification_max,export}` — mirrors the node rebuild-compare convention. Any deviation → `ERR_MALFORMED_MESSAGE`.
+- `v != "0.2"` → `ERR_MALFORMED_MESSAGE` per the M6-1 brief verbatim (differs from node/card, which use `ERR_PROTOCOL_VERSION`).
+- Missing `classification_max`/`export` is NOT treated as most-restrictive — it is `ERR_MALFORMED_MESSAGE` (fail closed, per brief). `cap.res` must be a non-empty string; `export` must be a real boolean; `nbf <= exp` required (backwards windows rejected at shape time); `prf` entries must match `sha256:<64 hex>`.
+- `grant_id_of` stays a pure function (no shape validation) so ids remain computable for the brief's shape test with non-agent ids.
+
+## D-030: Grant chain walk semantics (AUT-001..006, Task M6-1)
+
+- Depth (AUT-004) counts envelopes: `1 + len(chain_envs) <= 8`; 9 total → `ERR_GRANT_INVALID`.
+- `prf` linkage is positional: for every grant at index `i` (leaf = 0, parent-first order), each `prf[t]` must equal `grant_id_of` the envelope at `i+1+t`. This accepts single-parent chains (all `prf` len ≤ 1, only `[0]` links checked) and full-ancestry chains alike, and verifies every `prf` entry — nothing ignored. Non-last grant with empty `prf` (gap) or last grant with non-empty `prf` (dangling claim) → `ERR_GRANT_INVALID`.
+- AUT-003 delegation bit is per delegated cap: for every child cap, the parent must carry `aatp.grant.delegate` with `res_subset(child.res, delegate.res)`, else `ERR_GRANT_ATTENUATION` (fail-closed reading of "for that resource").
+- Time windows (AUT-004, skew imported from `aatp.messages.CLOCK_SKEW_SECONDS`, timestamps via `aatp.messages.parse_ts` — no local copies) are enforced for EVERY envelope in the chain, not just the leaf.
+- `verify_chain(..., revoked=None, *, key_resolver)`: `revoked` defaults to empty; key resolution follows the `DagStore.add` pattern (`AATPError` propagates, other failures → `ERR_AUTH_FAILED`, non-32B key → `ERR_AUTH_FAILED`).
+
 ## D-028: Task 9 conformance gate — Core M0-M5 green, no production claim
 
 - Full suite: 261 passed (`234` pre-existing + `27` gate in `tests/test_vectors.py`) via `.venv\Scripts\python -m pytest`. No `aatp/*.py` change in Task 9 (no drift found; generator untouched, JSON diff empty).
