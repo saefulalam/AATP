@@ -34,8 +34,30 @@ def main():
         hashlib.sha256(b"AATP/0.2/AGENT-ID\n" + v03_pub).digest()).decode().lower().rstrip("=")
     assert v03_agent == "aatp:ikee37ajz5k56fdv2d6wajdoi3ytehpiwrm5vacyyygwqfkqadma"  # blueprint App. C
     VECTORS["V03"] = {"genesis_pub_hex": v03_pub.hex(), "agent_id": v03_agent}
+    # V04 content_root (independent of aatp.artifact; blueprint App. C).
+    d_run = sha256_hex(b"echo hi\n")
+    d_hello = sha256_hex(b"hello")
+    assert d_hello == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    assert d_run == "ab08508fdf5ca4da5c4995987bc41c56c048aaa5eeb046417ae4049b7d40286e"
+    v04_manifest = {"v": "0.2", "entries": [
+        {"path": "bin/run.sh", "size": 8, "x": True, "d": "sha256:" + d_run},
+        {"path": "hello.txt", "size": 5, "x": False, "d": "sha256:" + d_hello},
+    ]}
+    v04_jcs = jcs_minimal(v04_manifest)
+    assert v04_jcs.decode("ascii") == (
+        '{"entries":[{"d":"sha256:ab08508fdf5ca4da5c4995987bc41c56c048aaa5eeb046417ae4049b7d40286e",'
+        '"path":"bin/run.sh","size":8,"x":true},'
+        '{"d":"sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",'
+        '"path":"hello.txt","size":5,"x":false}],"v":"0.2"}'
+    )
+    v04_stream = b"echo hi\n" + b"hello"
+    assert v04_stream.hex() == "6563686f2068690a68656c6c6f"
+    v04_cr = "sha256:" + sha256_hex(b"AATP/0.2/CONTENT\n" + v04_jcs)
+    assert v04_cr == "sha256:9067a66c672c42accf461d38069a837189e8e2fe0713f4edc6f8e5ec3ce9c1cf"
+    VECTORS["V04"] = {"manifest_jcs_hex": v04_jcs.hex(),
+                      "stream_hex": v04_stream.hex(), "content_root": v04_cr}
     # write_bytes: avoid platform newline translation (vectors must be byte-exact).
-    OUT.write_bytes(json.dumps(VECTORS, indent=2, sort_keys=True).encode("utf-8"))
+    OUT.write_bytes(json.dumps(VECTORS, indent=2, sort_keys=True).encode("utf-8") + b"\n")
 
 
 if __name__ == "__main__":

@@ -79,3 +79,17 @@ Gaps, ambiguities and implementation choices (blueprint §0.4). One entry per de
 ## D-015: CardCache failure mode (ID-011, Task 3)
 
 - Missing file = empty cache. Corrupt JSON / wrong types / unreadable / unwritable file → `ERR_INTERNAL` (fail closed, never silently reset, so rollback protection cannot be bypassed by deleting semantics — note: deleting the file itself yields an empty cache, which operators must protect like any trust store).
+
+## D-016: Artifact limit and shape error-code mapping (ART-001..024, Task 4)
+
+- The blueprint names `ERR_PATH_INVALID` only for ART-004 and `ERR_MANIFEST_INVALID` for ART-007; no codes for ART-006 limits, manifest shape/version, prefix collisions, or stream length.
+- Mapping used: path syntax (ART-001/002/003) and case-fold collision (ART-004) → `ERR_PATH_INVALID`; everything else manifest-level (bad `v`/shape/types/`d` format, exact duplicate, unsorted order, file/dir prefix collision ART-005, all three ART-006 limits, stream length ≠ sum(sizes)) → `ERR_MANIFEST_INVALID`; per-file digest mismatch on split/materialize → `ERR_ARTIFACT_HASH_MISMATCH`; quarantine/I-O failures → `ERR_INTERNAL`.
+
+## D-017: Windows O_NOFOLLOW/O_EXCL equivalent and symlink refusal (ART-023, Task 4)
+
+- POSIX: `os.open` with `O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW`. Windows has no `O_NOFOLLOW`, so there flags are `O_WRONLY|O_CREAT|O_EXCL` (+`O_BINARY` where present) and symlink safety comes from pre-write checks: `dest_root` must not itself be a symlink; every existing parent prefix must satisfy `not islink` and `realpath(prefix) == join(realpath(root), prefix)`; the final parent's realpath must stay under `realpath(root)`; the final target must not already exist (`os.path.lexists`). Symlink detection failures → `ERR_PATH_INVALID`.
+- Modes: `x=true` → `0o755` else `0o644` via best-effort `os.chmod` (limited semantics on Windows). Content is written, never executed.
+
+## D-018: Materialize quarantine requires a fresh directory (ART-023, Task 4)
+
+- `materialize(manifest, stream, dest_root)` writes only into a nonexistent path (created with parents) or an existing empty directory. A non-empty directory or a non-directory at `dest_root` → `ERR_INTERNAL`. Fail closed so one transfer can never overwrite operator data; callers allocate one quarantine dir per transfer and release it per policy.
