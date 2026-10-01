@@ -294,3 +294,62 @@ def test_SEC002_instruct_wrong_resource_denied():
                              consumption_mode="instructions_allowed"))
     assert out == {"decision": "deny", "rule_id": "SEC-002",
                    "code": "ERR_POLICY_DENIED"}
+
+
+# --- edge cases (M6 fix wave) --------------------------------------------------
+
+def test_policy_unknown_consumption_mode_denied():
+    leaf, chain = _valid_chain()
+    out = _evaluate(_request(leaf, chain,
+                             consumption_mode="execute_everything"))
+    assert out == {"decision": "deny", "rule_id": "SEC-002",
+                   "code": "ERR_POLICY_DENIED"}
+
+
+def test_policy_unknown_classification_denied():
+    leaf, chain = _valid_chain()
+    out = _evaluate(_request(leaf, chain, classification="TOP-SECRET"))
+    assert out == {"decision": "deny", "rule_id": "GEN-010",
+                   "code": "ERR_MALFORMED_MESSAGE"}
+
+
+def test_policy_malformed_expires_denied():
+    leaf, chain = _valid_chain()
+    out = _evaluate(_request(leaf, chain, expires_at="not-a-time"))
+    assert out == {"decision": "deny", "rule_id": "GEN-010",
+                   "code": "ERR_MALFORMED_MESSAGE"}
+
+
+def test_policy_grant_auth_failed_maps_AUT001():
+    # grants.verify_chain re-raises resolver AATPError as-is, so the
+    # policy fallback maps ERR_AUTH_FAILED -> AUT-001.
+    leaf, chain = _valid_chain()
+
+    def bad_resolver(agent_id):
+        raise AATPError("ERR_AUTH_FAILED", 1102, "boom")
+
+    out = _evaluate(_request(leaf, chain), key_resolver=bad_resolver)
+    assert out == {"decision": "deny", "rule_id": "AUT-001",
+                   "code": "ERR_AUTH_FAILED"}
+
+
+def test_policy_classification_default_PUBLIC_allows():
+    leaf, chain = _chain([
+        (1, OWNER, ALICE, [_recv("project:alpha/*"), _deleg("project:alpha/*")],
+         "INTERNAL", False),
+        (2, ALICE, BOB, [_recv(RES)], "INTERNAL", False),
+    ])
+    req = _request(leaf, chain)
+    del req["classification"]
+    out = _evaluate(req)
+    assert out == {"decision": "allow", "rule_id": "POLICY-ALLOW",
+                   "code": None}
+
+
+def test_policy_missing_chain_key_allows():
+    g = _grant(OWNER, BOB, [_recv(RES)], cmax="CONFIDENTIAL")
+    req = _request(_env(g, 1), [])
+    del req["grant_chain_envs"]
+    out = _evaluate(req, presenter=BOB)
+    assert out == {"decision": "allow", "rule_id": "POLICY-ALLOW",
+                   "code": None}
