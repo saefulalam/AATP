@@ -267,4 +267,16 @@ Gaps, ambiguities and implementation choices (blueprint §0.4). One entry per de
 - Extra signature entries are unverified (PRV-023 multi-signature is M6+ scope, N/A to TS per brief).
 - No dependency changes: pins from D-039 unchanged (`@noble/curves 2.4.0`, `@noble/hashes 2.4.0`, `@hpke/core 1.9.0`, `@noble/ciphers 2.4.0`; dev `typescript 7.0.2`, `@types/node 26.6.4`).
 - Cross-interop probed both directions (ephemeral fixtures, not committed): TS-signed envelope verifies under Python `verify_envelope`, Python-signed under TS `verifyEnvelope`.
-- Out of scope (unchanged): rest of M8 (`artifact/node/chunks/seal`), card chain, transfers, grants/handoff/policy/quarantine/transport/MCP in TS; CRY-007 review still OPEN.
+## D-041: M8 TypeScript artifact + node (Task M8-3)
+
+- Fresh modules `ts/src/artifact.ts`, `ts/src/node.ts` (zero TS imports from Python; constants/grammars copied verbatim from `aatp/artifact.py`, `aatp/node.py`): `D_CONTENT=b"AATP/0.2/CONTENT\n"`, `D_NODE=b"AATP/0.2/NODE\n"`, ART-006 limits (1024 / 10000 / 2^32), reserved-name set, digest/agent/task/timestamp grammars, `CLOCK_SKEW_SECONDS=120`, node field order, D-021 error-code mapping (incl. case-fold collision → `ERR_PATH_INVALID`, prefix collision → `ERR_MANIFEST_INVALID`).
+- `build(files: Array<{path, data: Uint8Array, x: boolean}>)` accepts object entries (not Python 3-tuples — the tuple shape has no TS idiom; digest/size/sort/stream/contentRoot semantics identical). `x` strictly boolean; sizes safe integers; byte-sort via `TextEncoder` compare.
+- V04 byte-exact FIRST TRY: stream hex, manifest JCS hex, and content_root all equal the vectors file on the first green run (no fix wave).
+- Casefold approximation: `caseFold(s) = s.toLowerCase().replace(/ß/g, "ss")` (JS has no `casefold()`); covers the Straße/STRASSE pair in-test. Other Unicode special-casing (e.g. Turkish İ, Greek sigma edge cases where Python casefold and lower differ) may diverge — fail-closed direction unknown, recorded as approximation, not equivalence.
+- ART-002 control scope mirrors Python exactly (U+0000–U+001F + U+007F only; C1 U+0080–U+009F NOT rejected — same boundary as ledger T4-3).
+- No-materialize scope: TS has no `materialize` (no filesystem writes); validate + build + stream only. Cross-transfer reassembly is M8-4+ scope.
+- `DagStore` fields use TS `private` (not `#`) so tests can inject synthetic A↔B graphs exactly like Python tests write `store._nodes` directly (PRV-003 defense-in-depth proof; honest hashes cannot cycle).
+- `validateNode` canonical-form check compares `jcs(rebuilt)` vs `jcs(input)` bytes (equivalent to Python dict `==` for validated canonical values; also enforces the assurance-default normalization).
+- Cross-interop probed both directions (ephemeral fixtures, not committed): TS V04 manifest validates under Python `validate_manifest` and is byte-identical (manifest/stream/content_root); TS node envelope accepted by Python `DagStore.add`; Python node envelope accepted by TS `DagStore.add` (partial ancestry in a fresh store, correct lazy semantics).
+- No blueprint-hash asserts per D-020: determinism + independent recompute (`D_NODE + JCS` in-test) + revert-distinct (same contentRoot, different parents → different ids, accepted).
+- Out of scope (unchanged): rest of M8 (`chunks/seal`), card chain, transfers, grants/handoff/policy/quarantine/transport/MCP in TS; CRY-007 review still OPEN.
