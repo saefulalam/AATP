@@ -305,9 +305,13 @@ export function build(files: unknown): BuildResult {
   }
   const items: { path: string; data: Uint8Array; x: boolean }[] = [];
   for (const item of files as unknown[]) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      manifestInvalid("file entry must be {path, data, x}");
+    }
+    const ek = Object.keys(item as Record<string, unknown>);
     if (
-      typeof item !== "object" || item === null || Array.isArray(item) ||
-      !("path" in item) || !("data" in item) || !("x" in item)
+      ek.length !== 3 || !ek.includes("path") || !ek.includes("data") ||
+      !ek.includes("x")
     ) {
       manifestInvalid("file entry must be {path, data, x}");
     }

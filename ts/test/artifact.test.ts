@@ -231,6 +231,12 @@ describe("ART-004..007 validateManifest + build negatives", () => {
       "ERR_MANIFEST_INVALID",
     );
   });
+  it("rejects build entries with extra keys", () => {
+    assert.equal(
+      codeOf(() => build([{ path: "a.txt", data: b("x"), x: false, extra: 1 }] as never)),
+      "ERR_MANIFEST_INVALID",
+    );
+  });
   it("rejects overlong paths and too many entries", () => {
     assert.equal(
       codeOf(() => build([{ path: "a".repeat(1025), data: b("x"), x: false }])),
