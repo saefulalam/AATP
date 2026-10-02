@@ -1,0 +1,53 @@
+{
+  "_test_only_keys": true,
+  "note": "TEST-ONLY throwaway keys. Never production keys. See DECISIONS.md D-042.",
+  "ts_actor_id": "aatp:jfte2w4xsthhvv3ebx2y7mk34l352hmnpgoprbomrktd3osl5vsa",
+  "ts_actor_pub_hex": "c6822637c7d310ec57627be00ba259d253749f4aaf644470cffbe53a35f73242",
+  "ts_recipient_agent_id": "aatp:3r5vdwwunx6idjqa2apxradlk5nyw5rotmrne4oqwybbvhyozunq",
+  "ts_recipient_enc_key_id": "rk-test-ts-1",
+  "ts_recipient_enc_priv_hex": "6666666666666666666666666666666666666666666666666666666666666666",
+  "ts_recipient_enc_pub_hex": "219e4d800da968d2a5fcb009c784f4746c7138edb9ee4844b739e830b05cf424",
+  "content_root": "sha256:fb427cb06a31c91bdbe725c252bf985d63e3aaf3bb37f3f27bc3f1e59bfc7d27",
+  "transfer_id": "tx_demo_ts",
+  "chunk_size": 5,
+  "stream_hex": "68656c6c6f2066726f6d207473",
+  "node_id": "sha256:b3cfc98af61111c094e378ac0009cafdcbf697681c9ed29c9282f63263fc89dc",
+  "payload_type": "application/vnd.aatp.node+json",
+  "ts_packet": {
+    "aatp": "0.2",
+    "to": "aatp:3r5vdwwunx6idjqa2apxradlk5nyw5rotmrne4oqwybbvhyozunq",
+    "to_key_id": "rk-test-ts-1",
+    "enc": "pYz0jauogL0pMqoJur4MVUukgaCye04g3507C5cZVQo",
+    "ct": "FrZRbPKc75yDvS7WtGimO8C6w7zqVLEzIYtGGFNr5lLOadggwlJH-w4cN6vh2uFuMB85soLhsW1U2AHt_qut20jIFSWIkNa1Cr0qKjsTTxHR3R3yaIifs8G2oaBYMgjl2pKMP4Zj3W4OLxqAONctT5nFfoC0YlE4f6Ef_yfmmHQhYqXv0O1wWzz1_jrGVxiQQWu2TYflhtk-8qK5Q_imuozIIH1OooRrzlNTuv5WTV3Xxf_WeiHSnnCK0Ll_h9RHM5aMIVFXemOop7ch_Z5f9-ILzy0P3LyhP42C6ixXAaXMvRgheBpv90gs-_DnNX8d9mkMXSH50hd19wSTrpF_boZZ2rVPvq2c8CJiBrrXFHfQ8dkQbs7351vZ6kqr4pqGprQGWCn4XZH6mi5v4JC7DJsNv5lmOtkc3H9DXOzRJnW0i3QfKJjhr5NguYrerw0HMEkEwOM4rD_K3pi1Ugtpava52FRu44IZ-oEkieET6XFQCQajOafglrfUZ3AEzKXYUrEdyd9EUl3K1FdfjlhYlKWu3NJHDFOPsIhYShra_3EaJC_8SefoGBldZ6KWjkg5F4NCA5wjlU_KviJYx0DZGNLDQQVPWQ4yucmdNCWnoy8RXyVsOxpLjggOjHUZOBjmPrV4M69kvPSC2o5XC9mzKPd5_LxoPDtUUY4FC4HZC9SBbwuNO1h3tf1SHFTl6wbuM8zInU1rF953zT3d6ehG_kh9K4mAIpo7HBvXPm_saKEiQEKS-0YA"
+  },
+  "ts_node_envelope": {
+    "payloadType": "application/vnd.aatp.node+json",
+    "payload": "eyJhY3RvciI6ImFhdHA6amZ0ZTJ3NHhzdGhodnYzZWJ4Mnk3bWszNGwzNTJobW5wZ29wcmJvbXJrdGQzb3NsNXZzYSIsImNvbnRlbnRfcm9vdCI6InNoYTI1NjpmYjQyN2NiMDZhMzFjOTFiZGJlNzI1YzI1MmJmOTg1ZDYzZTNhYWYzYmIzN2YzZjI3YmMzZjFlNTliZmM3ZDI3IiwiY3JlYXRlZF9hdCI6IjIwMjYtMTAtMDFUMDA6MDA6MDBaIiwib3BlcmF0aW9uIjoiY3JlYXRlIiwicGFyZW50cyI6W10sInRhc2tfaWQiOiJ0YXNrX2ludGVyb3BfdHMiLCJ2IjoiMC4yIn0",
+    "signatures": [
+      {
+        "keyid": "k-interop-ts",
+        "sig": "0CaqhGvyVHnl3mJ9ka4YUaG1cX-L7jZugRypa4mftLNwC18PxbtO1Oq6i6frmZ5XVkKDoMbYYwQq0lvQaYBaDA"
+      }
+    ]
+  },
+  "ts_wrap_entry": {
+    "agent_id": "aatp:3r5vdwwunx6idjqa2apxradlk5nyw5rotmrne4oqwybbvhyozunq",
+    "enc_key_id": "rk-test-ts-1",
+    "enc": "IsizmG7ctfvMQJ0FSiZf3sEhvTU8YLbwP3CyFb9H4iM",
+    "ct": "TqnQM2tkE-DQAyGP36UehUZE5VLOvcRgfd13Ke6UdjUsGZoD7MrRsx27_hma7Nij"
+  },
+  "ts_chunks": [
+    {
+      "index": 0,
+      "data_b64": "6AYzsHzrjPItQtkW9I7rD1KoKy4w"
+    },
+    {
+      "index": 1,
+      "data_b64": "czGo2Xv1hiIZDQWSpPLP97kyKo7q"
+    },
+    {
+      "index": 2,
+      "data_b64": "DEc55r1Q4pa5gWpCxlX5M_mGhg"
+    }
+  ]
+}

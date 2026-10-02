@@ -1,0 +1,49 @@
+{
+  "_test_only_keys": true,
+  "note": "TEST-ONLY throwaway keys. Never production keys. See DECISIONS.md D-042.",
+  "actor_id": "aatp:ikee37ajz5k56fdv2d6wajdoi3ytehpiwrm5vacyyygwqfkqadma",
+  "actor_pub_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+  "recipient_agent_id": "aatp:4aeekga4b2ajr5rte2zanh2itw2jvr6nrsyb5jb3iho66noesspq",
+  "recipient_enc_key_id": "rk-test-py-1",
+  "recipient_enc_priv_hex": "4444444444444444444444444444444444444444444444444444444444444444",
+  "recipient_enc_pub_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b",
+  "content_root": "sha256:9067a66c672c42accf461d38069a837189e8e2fe0713f4edc6f8e5ec3ce9c1cf",
+  "transfer_id": "tx_demo1",
+  "chunk_size": 8,
+  "stream_hex": "6563686f2068690a68656c6c6f",
+  "node_id": "sha256:aec3c45110d1ca74aedb113a0eb87088b6da0d9ac7ae5846f38da39c8920916f",
+  "payload_type": "application/vnd.aatp.node+json",
+  "offer_packet": {
+    "aatp": "0.2",
+    "to": "aatp:4aeekga4b2ajr5rte2zanh2itw2jvr6nrsyb5jb3iho66noesspq",
+    "to_key_id": "rk-test-py-1",
+    "enc": "8p1CruYWs6wfLot0zKucTtRcIkK2cDfYQljfcwfcmWs",
+    "ct": "AVCzfy8EMmZzDrCOoUesFWysibzYkikfNugn7xp2CAwqiYRHtaeblQvZJL1ioNQqhpqYc9n5Uaa0lsn_ubLR_D0o5cwNkA4LABf0z9TGggf7O0lao077Jt3Tlv2UNhvIw5_Rg_kQ1tkMpgplWUT681i6c7393fNpXKiIUczPn5IFoLHoPmnbQg6eaGVCUfmcRBkEMyq3YNVMgskeNHG-wcR8RtC6wt25n0328c62CstfHVhVptMOicRLFD5A-htkTwa7O78_4hNSqBQX48Xe5mEAGF56oLIPpXJrSQsAaxobD6-AoCIgX6inpVX_m0TXOBCcF3CYC6gY54zEq6EKK1vIwFSp526yxixeIaDa5_AqwWcPr4xqPQGwrgk9uSpnKEhNzgCZgzq27G8PztctAy23L0PdVOjKS2EOSCJ4Pt0wtc4apr9shc5peqsGZ39t3V3Z9mjvf3iH41Er76fnES-CxZWP1JUzwFxL5-PKwIGLnBQjOJMA2-T2YyJIXLk8plLsdLo9LoBFZOYWiNZgtXnp_-rjwCo6EDcROnRJWQ05lWIYDQ3guNYuc8aV4eZXRKCa2i1Zrczx9RQg4SrxrxqICRKkjOh3UmcJzTO70UBkjK-B_os8RkOisQR1Dt4YLvjN9rhcA3DhqXJSxEuMo7WLwQqotPACNSVQkSgOVm27DMQca2wvEeiVjRePhcnoPDkg4FBr0aAZWzxq3GrnYgzXcsfeces0ugYUw-BSc76ff23z1s6n"
+  },
+  "node_envelope": {
+    "payloadType": "application/vnd.aatp.node+json",
+    "payload": "eyJhY3RvciI6ImFhdHA6aWtlZTM3YWp6NWs1NmZkdjJkNndhamRvaTN5dGVocGl3cm01dmFjeXl5Z3dxZmtxYWRtYSIsImNvbnRlbnRfcm9vdCI6InNoYTI1Njo5MDY3YTY2YzY3MmM0MmFjY2Y0NjFkMzgwNjlhODM3MTg5ZThlMmZlMDcxM2Y0ZWRjNmY4ZTVlYzNjZTljMWNmIiwiY3JlYXRlZF9hdCI6IjIwMjYtMTAtMDFUMDA6MDA6MDBaIiwib3BlcmF0aW9uIjoiY3JlYXRlIiwicGFyZW50cyI6W10sInRhc2tfaWQiOiJ0YXNrX2ludGVyb3BfcHkiLCJ2IjoiMC4yIn0",
+    "signatures": [
+      {
+        "keyid": "k-interop-py",
+        "sig": "xR6FEVor7m5nF10wIvFxLgM4TKM8VV9zJxdxtdOtPHgf5Ceju5yjzpPJ8l-TercpF_gNBopvDUESB-XhmPaYAw"
+      }
+    ]
+  },
+  "wrap_entry": {
+    "agent_id": "aatp:4aeekga4b2ajr5rte2zanh2itw2jvr6nrsyb5jb3iho66noesspq",
+    "enc_key_id": "rk-test-py-1",
+    "enc": "j8tcogtefJBFs7ipeM7rXIOloGTue-I2_gFKVter1BE",
+    "ct": "z6_SNzXbFBM6jzg51iSMaTNiB_no3bReHFba0iTzLTLSsW7WmocvIB3i-r8shRIU"
+  },
+  "chunks": [
+    {
+      "index": 0,
+      "data_b64": "fdsqXo2Oz9vfI_FlWFJx-VmKndqtBy3h"
+    },
+    {
+      "index": 1,
+      "data_b64": "ATkQtV7KSTAWMSuecJ0n2YALnP4l"
+    }
+  ]
+}
