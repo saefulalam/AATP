@@ -255,5 +255,16 @@ Gaps, ambiguities and implementation choices (blueprint §0.4). One entry per de
 - Duplicate-key detection needs no tokenizer: `parseJcs` requires `jcs(parsed) === input` byte-exact, and `JSON.parse` collapses dupes, so any duplicate key shrinks the re-serialization and the byte compare always differs (same-value dupes included). Documented in the `canon.ts` header comment.
 - `Buffer` (Node built-in, not a crypto primitive) used only for base64url/hex alphabet conversion in `ts/src/b64.ts`; strictness (regex, no `=`, `len % 4 != 1`, re-encode compare for trailing bits) is explicit, mirroring `aatp/b64.py`.
 - `ERROR_REGISTRY` numerics copied verbatim from `aatp/errors.py`; `err()` falls back to `ERR_INTERNAL` (9000) on unknown codes like Python.
-- Cross-checks green: V01 hex, V02 `b64u(hello)` + `sha256(hello)` via noble, V04 hand-built manifest `jcs` hex == `manifest_jcs_hex`, V09 float reject.
-- Out of scope (unchanged): rest of M8 (`signer/dsse/ids/artifact/node/chunks/seal`), card chain, transfers, grants/handoff/policy/quarantine/transport/MCP in TS; CRY-007 review still OPEN.
+## D-040: M8 TypeScript DSSE + signer + ids (Task M8-2)
+
+- Fresh modules `ts/src/signer.ts`, `ts/src/dsse.ts`, `ts/src/ids.ts` (zero TS imports from Python; constants/grammars copied verbatim from `aatp/dsse.py`, `aatp/signer.py`, `aatp/ids.py`): five `PT_*` strings, `ED25519_L`, `D_AGENT=b"AATP/0.2/AGENT-ID\n"`, PAE grammar, verify check order (payloadType → envelope shape → b64u → JCS → lengths → S<L → verify), D-007 single-signature selection.
+- CRY-002: `sign()` signs PAE bytes directly via noble `ed25519.sign`; test verifies the raw signature over `pae()` with noble `ed25519.verify`.
+- CRY-003: explicit `S < L` BigInt check before verify (backend-independent, mirrors D-004). Probe: noble 2.4.0 already rejects `S+L` natively (`ed25519.verify` returns false), so the explicit check is belt-and-suspenders, identical posture to Python.
+- SIG-003 code: `ERR_MALFORMED_MESSAGE` for payloadType mismatch (mirrors D-005); type compared before the payload is touched (ordering proved by a test with corrupt payload + wrong type).
+- `verifyEnvelope` fails closed beyond Python: noble `verify` exceptions (e.g. invalid-point 32-byte keys, which Python leaks as raw `ValueError`) map to `ERR_SIGNATURE_INVALID`.
+- SIG-001: secret in `#private` fields, so `JSON.stringify(signer)` is `{}` (tested to contain no key material). `fromSeed` requires 32-byte `Uint8Array` (else `ERR_MALFORMED_MESSAGE`); `generate()` uses `node:crypto` `randomBytes` = OS CSPRNG (CRY-006 basis, mirrors D-023/D-004 notes).
+- `deriveAgentId`: noble `sha256` from `@noble/hashes/sha2.js` (same import path as the M8-1 b64 test); hand-written RFC4648 base32 encoder in `ids.ts` (no dep; masked accumulator so `buffer` never exceeds 13 bits). V03 byte-exact: seed `0x11`×32 → pub `d04ab232…9778737` (matches Python `SoftwareSigner.from_seed`, asserted in-test) → `aatp:ikee37…fkqadma`.
+- Extra signature entries are unverified (PRV-023 multi-signature is M6+ scope, N/A to TS per brief).
+- No dependency changes: pins from D-039 unchanged (`@noble/curves 2.4.0`, `@noble/hashes 2.4.0`, `@hpke/core 1.9.0`, `@noble/ciphers 2.4.0`; dev `typescript 7.0.2`, `@types/node 26.6.4`).
+- Cross-interop probed both directions (ephemeral fixtures, not committed): TS-signed envelope verifies under Python `verify_envelope`, Python-signed under TS `verifyEnvelope`.
+- Out of scope (unchanged): rest of M8 (`artifact/node/chunks/seal`), card chain, transfers, grants/handoff/policy/quarantine/transport/MCP in TS; CRY-007 review still OPEN.
