@@ -42,10 +42,9 @@ async function main(): Promise<void> {
   const recipientId = deriveAgentId(recipSigner.publicKeyRaw());
   const recipPub = new Uint8Array(x25519.getPublicKey(RECIP_ENC_PRIV));
 
-  const { manifest, stream, contentRoot } = build([
+  const { stream, contentRoot } = build([
     { path: "ts_hello.txt", data: enc.encode("hello from ts"), x: false },
   ]);
-  void manifest;
   const { node } = makeNode(
     contentRoot,
     [],

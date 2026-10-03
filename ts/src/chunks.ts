@@ -11,7 +11,12 @@ export const D_CHUNK: Uint8Array = new TextEncoder().encode("AATP/0.2/CHUNK\n");
 
 // ENC-006 sequence space: indices valid in [0, 2^63). Kept as a float-free
 // integer literal; comparisons use >= so any out-of-range value fails closed.
+// NOTE: SEQ_LIMIT as a JS number is exactly 2^63 (a power of two), but doubles
+// cannot represent every integer above 2^53 (spacing is 1024 at 2^63), so
+// number checks alone are imprecise near the boundary; bigint inputs are
+// rejected exactly via SEQ_LIMIT_BIG below.
 export const SEQ_LIMIT = 2 ** 63;
+const SEQ_LIMIT_BIG = 2n ** 63n;
 
 function sequenceInvalid(detail: string): never {
   throw err("ERR_SEQUENCE_INVALID", detail);
@@ -22,12 +27,26 @@ function authFailed(detail: string): never {
 }
 
 function checkIndex(i: unknown): asserts i is number {
+  if (typeof i === "bigint") {
+    // Exact boundary check: any bigint >= 2^63 (or < 0) fails closed.
+    if (i < 0n || i >= SEQ_LIMIT_BIG) {
+      sequenceInvalid("index >= 2^63");
+    }
+    sequenceInvalid("index must be number");
+  }
   if (typeof i !== "number" || !Number.isInteger(i) || i < 0 || i >= SEQ_LIMIT) {
     sequenceInvalid("index >= 2^63");
   }
 }
 
 function checkTotal(n: unknown): asserts n is number {
+  if (typeof n === "bigint") {
+    // Exact boundary check: any bigint > 2^63 (or <= 0) fails closed.
+    if (n <= 0n || n > SEQ_LIMIT_BIG) {
+      sequenceInvalid("total out of range");
+    }
+    sequenceInvalid("total must be number");
+  }
   if (
     typeof n !== "number" ||
     !Number.isInteger(n) ||

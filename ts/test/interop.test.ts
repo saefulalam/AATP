@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { x25519 } from "@noble/curves/ed25519.js";
-import { hexToBytes, hex } from "../src/b64.ts";
+import { hexToBytes, hex, b64uDec } from "../src/b64.ts";
 import { PT_NODE, verifyEnvelope } from "../src/dsse.ts";
 import { decryptOne } from "../src/chunks.ts";
 import { nodeIdOf, validateNode } from "../src/node.ts";
@@ -65,7 +65,7 @@ describe("interop Python -> TS", () => {
     const total = chunks.length;
     const parts: Uint8Array[] = [];
     for (const c of chunks) {
-      const ct = Uint8Array.from(Buffer.from(c.data_b64, "base64url"));
+      const ct = b64uDec(c.data_b64);
       parts.push(
         decryptOne(
           cek,

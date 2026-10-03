@@ -1,1 +1,3 @@
 tests/vectors/*.json -text
+ts/testdata/*.json -text
+tests/testdata-ts/*.json -text

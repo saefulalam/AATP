@@ -132,7 +132,7 @@ export class KeyStore {
       if (typeof encKeyId !== "string") {
         decryptFailed("unknown key");
       }
-      const skRaw = this.keys.get(encKeyId as string);
+      const skRaw = this.keys.get(encKeyId);
       if (skRaw === undefined) {
         decryptFailed("unknown key id");
       }
@@ -142,15 +142,13 @@ export class KeyStore {
       if (!(info instanceof Uint8Array)) {
         decryptFailed("bad info");
       }
-      const skr = await SUITE.kem.deserializePrivateKey(
-        skRaw as Uint8Array,
-      );
+      const skr = await SUITE.kem.deserializePrivateKey(skRaw);
       const ctx = await SUITE.createRecipientContext({
         recipientKey: skr,
-        enc: enc as Uint8Array,
-        info: info as Uint8Array,
+        enc,
+        info,
       });
-      return new Uint8Array(await ctx.open(ct as Uint8Array, EMPTY_AAD));
+      return new Uint8Array(await ctx.open(ct, EMPTY_AAD));
     } catch (e) {
       if (e instanceof AATPError && e.code === "ERR_DECRYPT_FAILED") {
         throw e;
@@ -182,7 +180,7 @@ async function seal(
   }
   try {
     const ctx = await SUITE.createSenderContext({
-      recipientPublicKey: pkr as CryptoKey,
+      recipientPublicKey: pkr,
       info,
     });
     const ct = new Uint8Array(await ctx.seal(pt, EMPTY_AAD));
