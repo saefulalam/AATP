@@ -3,6 +3,8 @@
 Routes exactly:
   POST /aatp/v0.2/packets -> 202 {id} (idempotent by content hash)
   PUT /aatp/v0.2/transfers/{tx}/chunks/{i} -> 204 (idempotent)
+  GET /aatp/v0.2/transfers/{tx}/chunks/{i} -> 200 octet-stream / 404
+  PUT /aatp/v0.2/agents/{agent_id}/card -> 204 (self-signed card publish)
   GET /aatp/v0.2/agents/{agent_id}/card -> 200 card / 404 ERR_ARTIFACT_NOT_FOUND
   GET /aatp/v0.2/mailbox/{agent_id} -> 200 [packets] + drain (DSSE auth)
 """
@@ -14,7 +16,7 @@ from urllib.parse import unquote, urlsplit
 
 from aatp.b64 import b64u, b64u_dec
 from aatp.canon import jcs, parse_jcs
-from aatp.dsse import PT_MESSAGE, verify_envelope
+from aatp.dsse import PT_CARD, PT_MESSAGE, verify_envelope
 from aatp.errors import AATPError, err
 from aatp.messages import parse_ts
 
@@ -63,6 +65,24 @@ def serve(relay, *, host: str = "127.0.0.1", port: int = 0,
             self.send_header("Content-Length", "0")
             self.end_headers()
 
+        def _send_bytes(self, status: int, raw: bytes,
+                        content_type: str) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def _agent_card_path(self) -> str | None:
+            path = self._path_only()
+            if not (path.startswith(_AGENTS_PREFIX)
+                    and path.endswith("/card")):
+                return None
+            middle = path[len(_AGENTS_PREFIX):-len("/card")]
+            if not middle or "/" in middle:
+                return None
+            return unquote(middle)
+
         def _read_body(self) -> bytes:
             try:
                 length = int(self.headers.get("Content-Length") or 0)
@@ -102,8 +122,12 @@ def serve(relay, *, host: str = "127.0.0.1", port: int = 0,
                 return
             self._send_json(202, {"id": pid})
 
-        # -- PUT /transfers/{tx}/chunks/{i} --------------------------
+        # -- PUT /transfers/{tx}/chunks/{i}  +  PUT .../agents/{id}/card
         def do_PUT(self):
+            aid = self._agent_card_path()
+            if aid is not None:
+                self._handle_put_card(aid)
+                return
             m = _TRANSFERS_RE.match(self._path_only())
             if not m:
                 self._send_json(404, _err_body("ERR_MALFORMED_MESSAGE", "not found"))
@@ -128,7 +152,56 @@ def serve(relay, *, host: str = "127.0.0.1", port: int = 0,
                 return
             self._send_empty(204)
 
-        # -- GET card / mailbox ---------------------------------------
+        def _handle_put_card(self, aid: str) -> None:
+            raw = self._read_body()
+            try:
+                text = raw.decode("utf-8")
+                env = json.loads(text) if text else None
+            except (UnicodeDecodeError, ValueError):
+                self._send_json(400, _err_body("ERR_MALFORMED_MESSAGE",
+                                               "bad JSON"))
+                return
+            if not isinstance(env, dict):
+                self._send_json(400, _err_body("ERR_MALFORMED_MESSAGE",
+                                               "bad card envelope"))
+                return
+            try:
+                card = parse_jcs(b64u_dec(env["payload"]))
+            except AATPError as e:
+                self._send_json(400, _err_body(e.code, e.detail))
+                return
+            except Exception:
+                self._send_json(400, _err_body("ERR_MALFORMED_MESSAGE",
+                                               "bad card payload"))
+                return
+            if not isinstance(card, dict) or card.get("agent_id") != aid:
+                self._send_json(400, _err_body("ERR_MALFORMED_MESSAGE",
+                                               "card agent_id != path"))
+                return
+            try:
+                pub_raw = b64u_dec(card["signing_key"]["public_key"])
+                if not isinstance(pub_raw, bytes) or len(pub_raw) != 32:
+                    raise err("ERR_MALFORMED_MESSAGE", "bad signing key")
+                verify_envelope(env, PT_CARD, pub_raw)
+            except AATPError as e:
+                self._send_json(400, _err_body(e.code, e.detail))
+                return
+            except Exception:
+                self._send_json(400, _err_body("ERR_MALFORMED_MESSAGE",
+                                               "bad card"))
+                return
+            try:
+                relay_ref.put_card(aid, env)
+            except AATPError as e:
+                self._relay_error(e)
+                return
+            except Exception:
+                self._send_json(400, _err_body("ERR_MALFORMED_MESSAGE",
+                                               "bad card"))
+                return
+            self._send_empty(204)
+
+        # -- GET card / mailbox / chunk -------------------------------
         def do_GET(self):
             path = self._path_only()
             if path.startswith(_AGENTS_PREFIX) and path.endswith("/card"):
@@ -151,6 +224,34 @@ def serve(relay, *, host: str = "127.0.0.1", port: int = 0,
                     return
                 aid = unquote(aid_enc)
                 self._handle_mailbox(aid, path)
+                return
+            m = _TRANSFERS_RE.match(path)
+            if m:
+                tx = unquote(m.group(1))
+                i_str = unquote(m.group(2))
+                if not _TX_RE.match(tx):
+                    self._send_json(400, _err_body("ERR_MALFORMED_MESSAGE",
+                                                   "bad transfer_id"))
+                    return
+                if not _INDEX_RE.match(i_str):
+                    self._send_json(400, _err_body("ERR_MALFORMED_MESSAGE",
+                                                   "bad chunk index"))
+                    return
+                data_b64 = relay_ref.get_chunk(tx, int(i_str))
+                if data_b64 is None:
+                    self._send_json(404, _err_body("ERR_TRANSFER_NOT_FOUND",
+                                                   "chunk not found"))
+                    return
+                try:
+                    raw = b64u_dec(data_b64)
+                except AATPError as e:
+                    self._send_json(404, _err_body(e.code, e.detail))
+                    return
+                except Exception:
+                    self._send_json(404, _err_body("ERR_TRANSFER_NOT_FOUND",
+                                                   "chunk not found"))
+                    return
+                self._send_bytes(200, raw, "application/octet-stream")
                 return
             self._send_json(404, _err_body("ERR_MALFORMED_MESSAGE", "not found"))
 

@@ -550,6 +550,106 @@ def test_card_negatives_relay():
     assert jcs(relay.get_card(aid)) == jcs(bad)
 
 
+def test_put_card_publish_and_get():
+    from aatp.transport.relay import Relay
+    from aatp.transport.http import serve
+    s, aid = _agent(0xF1, "k1")
+    card_env = _card_for(s, aid)
+    relay = Relay()
+    server = serve(relay, host="127.0.0.1", port=0,
+                   card_resolver=lambda a: (_ for _ in ()).throw(KeyError(a)))
+    _run_server(server)
+    try:
+        base = _base_url(server)
+        st, _, _ = _http("PUT", base + f"/aatp/v0.2/agents/{aid}/card",
+                         body=jcs(card_env),
+                         headers={"Content-Type": "application/json"})
+        assert st == 204
+        st, raw, _ = _http("GET", base + f"/aatp/v0.2/agents/{aid}/card")
+        assert st == 200
+        assert jcs(json.loads(raw.decode())) == jcs(card_env)
+    finally:
+        server.shutdown()
+
+
+def test_put_card_agent_mismatch_400():
+    from aatp.transport.relay import Relay
+    from aatp.transport.http import serve
+    s, aid = _agent(0xF2, "k1")
+    _, other = _agent(0xF3, "k1")
+    card_env = _card_for(s, aid)
+    relay = Relay()
+    server = serve(relay, host="127.0.0.1", port=0,
+                   card_resolver=lambda a: (_ for _ in ()).throw(KeyError(a)))
+    _run_server(server)
+    try:
+        base = _base_url(server)
+        st, raw, _ = _http("PUT", base + f"/aatp/v0.2/agents/{other}/card",
+                           body=jcs(card_env),
+                           headers={"Content-Type": "application/json"})
+        assert st == 400
+        assert json.loads(raw.decode())["code"] == "ERR_MALFORMED_MESSAGE"
+        assert relay.get_card(other) is None
+    finally:
+        server.shutdown()
+
+
+def test_put_card_bad_sig_400():
+    from aatp.transport.relay import Relay
+    from aatp.transport.http import serve
+    s, aid = _agent(0xF4, "k1")
+    card_env = _card_for(s, aid)
+    bad = dict(card_env)
+    bad_sig = bytearray(b64u_dec(bad["signatures"][0]["sig"]))
+    bad_sig[0] ^= 1
+    bad["signatures"] = [{"keyid": "k1", "sig": b64u(bytes(bad_sig))}]
+    relay = Relay()
+    server = serve(relay, host="127.0.0.1", port=0,
+                   card_resolver=lambda a: (_ for _ in ()).throw(KeyError(a)))
+    _run_server(server)
+    try:
+        base = _base_url(server)
+        st, raw, _ = _http("PUT", base + f"/aatp/v0.2/agents/{aid}/card",
+                           body=jcs(bad),
+                           headers={"Content-Type": "application/json"})
+        assert st == 400
+        assert json.loads(raw.decode())["code"] == "ERR_SIGNATURE_INVALID"
+        assert relay.get_card(aid) is None
+    finally:
+        server.shutdown()
+
+
+def test_get_chunk_roundtrip_404():
+    from aatp.transport.relay import Relay
+    from aatp.transport.http import serve
+    relay = Relay()
+    server = serve(relay, host="127.0.0.1", port=0,
+                   card_resolver=lambda a: (_ for _ in ()).throw(KeyError(a)))
+    _run_server(server)
+    try:
+        base = _base_url(server)
+        payload = b"\x00\x01\x02chunk-bytes"
+        st, _, _ = _http("PUT", base + "/aatp/v0.2/transfers/tx_c1/chunks/3",
+                         body=payload,
+                         headers={"Content-Type": "application/octet-stream"})
+        assert st == 204
+        st, raw, headers = _http("GET",
+                                 base + "/aatp/v0.2/transfers/tx_c1/chunks/3")
+        assert st == 200
+        assert raw == payload
+        assert headers.get("Content-Type") == "application/octet-stream"
+        st, raw, _ = _http("GET",
+                           base + "/aatp/v0.2/transfers/tx_c1/chunks/9")
+        assert st == 404
+        assert json.loads(raw.decode())["code"] == "ERR_TRANSFER_NOT_FOUND"
+        st, _, _ = _http("GET", base + "/aatp/v0.2/transfers/bad!tx/chunks/0")
+        assert st == 400
+        st, _, _ = _http("GET", base + "/aatp/v0.2/transfers/tx_c1/chunks/x")
+        assert st == 400
+    finally:
+        server.shutdown()
+
+
 def test_NET001_no_tls_dependency_sealed_opaque():
     from aatp.transport.relay import Relay
     from aatp.seal import seal_packet
