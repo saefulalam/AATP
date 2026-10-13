@@ -222,3 +222,33 @@ def test_readme_states_demo_caveats():
     assert "TEST-ONLY" in readme
     assert "CRY-007" in readme
     assert "OPEN" in readme
+
+
+def test_relay_exits_nonzero_when_a_live_lock_holds_a_free_port(tmp_path,
+                                                               monkeypatch):
+    """Exit 0 here would tell the caller a relay is up when none is serving."""
+    import relay_server
+    lock = tmp_path / "relay.lock"
+    monkeypatch.setattr(relay_server, "lock_path", lambda: lock)
+    assert relay_server.take_relay_lock(lock, 8793) is not None
+    assert relay_server.main(["8793"]) == 2
+    assert not relay_server.port_in_use("127.0.0.1", 8793)
+
+
+def test_auth_header_binds_the_method_it_is_given(tmp_path):
+    """The DSSE payload names the request method instead of assuming GET."""
+    import agent_cli
+    from aatp.canon import parse_jcs
+    from aatp.b64 import b64u_dec
+    agent_cli.main(["init", "--dir", str(tmp_path / "a"), "--name", "signer"])
+    st = agent_cli.load_state(tmp_path / "a")
+    path = "/aatp/v0.2/mailbox/" + st["agent_id"]
+    for method in ("GET", "PUT"):
+        header = agent_cli.auth_header(st["signer"], st["agent_id"], path,
+                                       "2026-10-13T00:00:00Z", method=method)
+        env = parse_jcs(b64u_dec(header[len("DSSE "):]))
+        payload = parse_jcs(b64u_dec(env["payload"]))
+        assert payload["method"] == method
+        assert payload["path"] == path
+    assert agent_cli.auth_header(
+        st["signer"], st["agent_id"], path, "2026-10-13T00:00:00Z")

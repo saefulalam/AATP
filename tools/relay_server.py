@@ -8,8 +8,9 @@ HTTP routes come from ``aatp.transport.http.serve`` unchanged -- this file only
 adds process plumbing (lock file, port reuse, clean shutdown).
 
 Single instance: exactly one relay per lock file. A second ``relay_server.py``
-that finds a live lock prints the running pid/port and exits 0 rather than
-fighting over the port; a lock left behind by a dead process is taken over.
+that finds a live lock prints the running pid/port and exits 2 rather than
+fighting over the port -- exiting 0 would tell the caller a relay is serving
+when none is. A lock left behind by a dead process is taken over.
 """
 import json
 import os
@@ -54,7 +55,12 @@ def pid_alive(pid: int) -> bool:
 
 
 def take_relay_lock(path: Path, port: int) -> dict | None:
-    """Claim the relay lock; return the owner record, or None if held."""
+    """Claim the relay lock; return the owner record, or None if held.
+
+    This read-then-write is advisory: two processes can both pass it. What
+    actually keeps one relay up is the ``serve`` bind in ``main``, which fails
+    for the loser; the lock only makes the common case print a clear message.
+    """
     path = Path(path)
     if path.exists():
         try:
@@ -128,7 +134,7 @@ def main(argv=None) -> int:
             owner = {}
         print(f"relay: already running as pid {owner.get('pid')} "
               f"on port {owner.get('port')}; nothing to do")
-        return 0
+        return 2
 
     relay = Relay()
     server = serve(relay, host=host, port=port,

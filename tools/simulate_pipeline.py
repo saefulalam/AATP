@@ -163,13 +163,13 @@ def bootstrap(run: Path, base: str) -> dict:
     return states
 
 
-def issue_grants(run: Path, states: dict) -> dict:
+def issue_grants(run: Path, base: str, states: dict) -> dict:
     step(1, "Coordinator issues G1; the Coder attenuates it into G2 and G3")
     coordinator, coder = run / "coordinator", run / "coder"
     reviewer_id = states["reviewer"]["agent_id"]
     coordinator_id = states["coordinator"]["agent_id"]
 
-    cli("grant", "--dir", str(coordinator), "--audience",
+    cli("grant", "--dir", str(coordinator), "--relay", base, "--audience",
         states["coder"]["agent_id"],
         "--act", "aatp.artifact.send", "--act", RECV_ACT,
         "--act", "aatp.grant.delegate", "--act", HANDOFF_ACT,
@@ -182,14 +182,16 @@ def issue_grants(run: Path, states: dict) -> dict:
     window = ["--nbf", g1["body"]["nbf"], "--exp", g1["body"]["exp"]]
 
     # G2: Coder -> Reviewer, narrower resource, no instruct cap (AUT-002/003).
-    cli("grant", "--dir", str(coder), "--audience", reviewer_id,
+    cli("grant", "--dir", str(coder), "--relay", base, "--audience",
+        reviewer_id,
         "--act", RECV_ACT, "--res", RECV_RES,
         "--classification-max", "INTERNAL", "--name", "G2", "--prf", g1_id,
         *window)
     # G3: the same delegation edge carrying the handoff action. HandoffStore
     # binds the grant's presenter to the RECIPIENT (the party that answers), so
     # this leaf is addressed to the Coordinator for the reviewer's offer.
-    cli("grant", "--dir", str(coder), "--audience", coordinator_id,
+    cli("grant", "--dir", str(coder), "--relay", base, "--audience",
+        coordinator_id,
         "--act", HANDOFF_ACT, "--res", HANDOFF_RES,
         "--classification-max", "INTERNAL", "--name", "G3", "--prf", g1_id,
         *window)
@@ -366,6 +368,7 @@ def handoff_round_trip(run: Path, base: str, states: dict, happy: dict) -> dict:
         say(f"    Reviewer verified the signed response: decision={verified} "
             f"store state={store.state_of(handoff['handoff_id'], agent_cli.now_ts())}")
     return {"decision": verified, "sent": decision, "handoff": handoff,
+            "accepted_at": accept_now, "lease_expires_at": lease,
             "report_cr": got["content_root"], "verify_id": verify_id}
 
 
@@ -625,7 +628,7 @@ def verify_audit(path: Path) -> tuple:
 
 
 def report_audit(run: Path) -> None:
-    step(9, "re-verify the signed audit chain from scratch (AUD-002)")
+    step(9, "re-verify the hash-chained audit chain from scratch (AUD-002)")
     path = run / "reviewer" / "audit.json"
     count, head = verify_audit(path)
     entries = json.loads(path.read_text(encoding="utf-8"))["entries"]
@@ -653,7 +656,7 @@ def run_simulation(port: int = DEFAULT_PORT, run_dir: str = str(DEFAULT_RUN),
     base, proc = start_relay(port)
     try:
         states = bootstrap(run, base)
-        grants = issue_grants(run, states)
+        grants = issue_grants(run, base, states)
         stage_sources(run)
         happy = happy_path(run, base, states, grants, chunk_size)
         handoff = handoff_round_trip(run, base, states, happy)
@@ -690,6 +693,10 @@ def run_simulation(port: int = DEFAULT_PORT, run_dir: str = str(DEFAULT_RUN),
         raise SystemExit(f"received tree mismatch: {listing} != {expected}")
     if handoff["decision"] != "accept":
         raise SystemExit(f"handoff not accepted: {handoff['decision']}")
+    if parse_ts(handoff["accepted_at"]) >= parse_ts(handoff["lease_expires_at"]):
+        raise SystemExit("handoff accepted outside the lease: "
+                         f"{handoff['accepted_at']} >= "
+                         f"{handoff['lease_expires_at']}")
     say(f"\nagent_ids:")
     for name in AGENTS:
         say(f"    {name:<12} {states[name]['agent_id']}")

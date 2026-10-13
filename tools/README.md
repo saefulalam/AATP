@@ -78,8 +78,8 @@ with `--policy-presenter` if your grants are addressed to the sender.
 # ... same for the other three (ids come from each `init` line)
 
 # grants: root, then the Coder's delegations
-.venv\Scripts\python tools\agent_cli.py grant --dir run\coordinator --audience <coder-id> --act aatp.artifact.send --act aatp.artifact.receive --act aatp.grant.delegate --act aatp.task.handoff --res "project:alpha/*" --name G1
-.venv\Scripts\python tools\agent_cli.py grant --dir run\coder --audience <reviewer-id> --act aatp.artifact.receive --res "project:alpha/src/*" --name G2 --prf <grant_id(G1)> --nbf <G1.nbf> --exp <G1.exp>
+.venv\Scripts\python tools\agent_cli.py grant --dir run\coordinator --relay http://127.0.0.1:8765 --audience <coder-id> --act aatp.artifact.send --act aatp.artifact.receive --act aatp.grant.delegate --act aatp.task.handoff --res "project:alpha/*" --name G1
+.venv\Scripts\python tools\agent_cli.py grant --dir run\coder --relay http://127.0.0.1:8765 --audience <reviewer-id> --act aatp.artifact.receive --res "project:alpha/src/*" --name G2 --prf <grant_id(G1)> --nbf <G1.nbf> --exp <G1.exp>
 .venv\Scripts\python tools\agent_cli.py grant-load --dir run\reviewer --leaf G2 --chain G1 --root <coordinator-id> --root <coder-id>
 
 # transfer with a dropped chunk, STATUS/have, resume
@@ -90,10 +90,11 @@ with `--policy-presenter` if your grants are addressed to the sender.
 ```
 
 Port **8765** is the default for both tools. `relay_server.py` is
-single-instance: a second copy finds a live `tools/relay.lock` and exits
-without fighting over the port; a lock left behind by a dead process is taken
-over. If a relay is already listening, `simulate_pipeline.py` reuses it instead
-of starting a second one.
+single-instance: a second copy finds a live `tools/relay.lock` and exits **2**
+without fighting over the port -- exit 0 would report a running relay when none
+is serving; a lock left behind by a dead process is taken over. If a relay is
+already listening, `simulate_pipeline.py` reuses it instead of starting a
+second one.
 
 On Windows `TerminateProcess` skips the relay's own cleanup, so a killed relay
 leaves its lock behind. That is exactly what the stale-lock branch is for: the

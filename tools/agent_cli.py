@@ -118,8 +118,9 @@ def relay_get_card(base: str, agent_id: str):
     return parse_jcs(b64u_dec(json.loads(raw)["payload"]))
 
 
-def auth_header(signer, agent_id: str, path: str, created_at: str) -> str:
-    payload = jcs({"method": "GET", "path": path,
+def auth_header(signer, agent_id: str, path: str, created_at: str,
+                method: str = "GET") -> str:
+    payload = jcs({"method": method, "path": path,
                    "created_at": created_at, "agent_id": agent_id})
     return "DSSE " + b64u(jcs(make_envelope(PT_MESSAGE, payload, signer)))
 
