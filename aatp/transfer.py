@@ -59,6 +59,10 @@ def _replay_key(sender: str, msg_id: str) -> str:
     return sender + "\n" + msg_id
 
 
+def _default_warn(text: str) -> None:
+    print(f"aatp: audit warning: {text}")
+
+
 def validate_have_ranges(have: object) -> list:
     """TRF-023: STATUS.have must be inclusive, sorted, non-overlapping ranges."""
     if not isinstance(have, list):
@@ -115,7 +119,8 @@ class TransferReceiver:
     def __init__(self, *, agent_id: str, signer, keystore, card_resolver,
                  trusted, own_card=None, dag=None, replay_path=None,
                  store_path=None, clock_skew_seconds: int = 120,
-                 send_window_chunks: int = SEND_WINDOW_CHUNKS):
+                 send_window_chunks: int = SEND_WINDOW_CHUNKS,
+                 audit_log_path: str | None = None, warn=None):
         self._agent_id = agent_id
         self._signer = signer
         self._keystore = keystore
@@ -129,6 +134,8 @@ class TransferReceiver:
         self._window = send_window_chunks
         self._replay = self._load_replay()
         self._store = self._load_store()
+        self._audit_path = Path(audit_log_path) if audit_log_path else None
+        self._warn = warn if warn is not None else _default_warn
 
     # -- durable stores -------------------------------------------------
 
@@ -190,6 +197,54 @@ class TransferReceiver:
         if self._store_path is not None:
             self._write_json(self._store_path,
                              {"v": "0.2", "transfers": self._store}, private=True)
+
+    # -- audit (AUD-001/002) --------------------------------------------
+
+    def _read_audit(self) -> dict:
+        """Current ``{"entries": [...], "head": hex}`` chain state."""
+        empty = {"entries": [], "head": "00" * 32}
+        if self._audit_path is None:
+            return empty
+        obj = self._read_json(self._audit_path)
+        if (not isinstance(obj, dict) or not isinstance(obj.get("entries"), list)
+                or not isinstance(obj.get("head"), str)):
+            # Corrupt audit log: start a fresh chain but keep going
+            # (best-effort, D-045). The gap stays visible in the file.
+            return empty
+        return obj
+
+    def _audit(self, event: str, **fields) -> None:
+        """Append one hash-chained entry (AUD-002). No path = no-op.
+
+        A forbidden field is rejected by ``sec.audit_append`` before anything
+        is written (AUD-001 fail-closed). Audit I/O failure only warns and
+        never aborts the transfer (D-045).
+        """
+        if self._audit_path is None:
+            return
+        from aatp import sec as sec_mod
+        entry = {"event": event}
+        entry.update(fields)
+        try:
+            state = self._read_audit()
+        except (OSError, AATPError) as e:
+            self._warn(f"audit log unreadable: {e}")
+            return
+        log = state["entries"]
+        new_hash = sec_mod.audit_append(log, entry, prev_hash=state["head"])
+        try:
+            self._write_json(self._audit_path, {"entries": log, "head": new_hash})
+        except OSError as e:
+            self._warn(f"audit log not written: {e}")
+
+    def _audit_verified(self, rec: dict, node_id: str) -> None:
+        """Record the integrity pass outcome for a finished transfer."""
+        try:
+            ancestry = self._dag.ancestry_status(node_id)
+        except AATPError:
+            ancestry = "unknown"  # node never entered the DAG (rejected pass)
+        self._audit("artifact_verified", content_root=rec["content_root"],
+                    node_id=node_id, ancestry=ancestry)
 
     def _prune_replay(self, now_str: str) -> None:
         for key in list(self._replay.keys()):
@@ -367,6 +422,8 @@ class TransferReceiver:
                                  "sender": sender, "chunks": {}, "have": [],
                                  "cek_b64u": "", "failures": 0}
             self._save_store()
+        self._audit("transfer_state", transfer_id=shown, state="REJECTED",
+                    sender=sender, recipient=self._agent_id, code=code)
         return [env]
 
     def _handle_offer(self, msg: dict, now: str) -> list:
@@ -386,6 +443,8 @@ class TransferReceiver:
         except AATPError:
             return rej("ERR_MALFORMED_MESSAGE", "bad transfer_id")
         txid = body["transfer_id"]
+        self._audit("message_received", msg_id=msg["id"], msg_type="OFFER",
+                    sender=sender, recipient=self._agent_id, transfer_id=txid)
 
         def rej_tx(code, detail):
             return rej(code, detail, txid)
@@ -484,6 +543,8 @@ class TransferReceiver:
             "state": "ACCEPTED", "failures": 0, "node_id": "", "receipt": None,
         }
         self._save_store()
+        self._audit("transfer_state", transfer_id=txid, state="ACCEPTED",
+                    sender=sender, recipient=self._agent_id)
         accept = self._sign_response("ACCEPT", sender, {"transfer_id": txid},
                                      now=now, transfer_id=txid,
                                      in_reply_to=reply_to)
@@ -554,6 +615,7 @@ class TransferReceiver:
             self._save_store()
             raise e
         rec["chunks"][str(index)] = b64u(pt)
+        self._audit("chunk_verified", transfer_id=txid, index=index)
         rec["have"] = ranges_of({int(k) for k in rec["chunks"].keys()})
         rec["failures"] = 0
         was_paused = rec["state"] == "PAUSED"
@@ -607,6 +669,8 @@ class TransferReceiver:
                 rec["state"] = "RECEIVING"
             self._save_store()
             return [self._status_envelope(rec, now, in_reply_to=msg["id"])]
+        self._audit("transfer_state", transfer_id=txid, state="VERIFYING",
+                    sender=msg["sender"], recipient=self._agent_id)
         return self._finish_verified(rec, msg, now)
 
     def _finish_verified(self, rec: dict, msg: dict, now: str) -> list:
@@ -639,6 +703,9 @@ class TransferReceiver:
                 node_id = ""
             rec["state"] = "REJECTED"
             self._save_store()
+            self._audit_verified(rec, node_id)
+            self._audit("transfer_state", transfer_id=rec["transfer_id"],
+                        state="REJECTED", outcome="rejected")
             receipt = self._sign_response(
                 "RECEIPT", rec["sender"],
                 {"transfer_id": rec["transfer_id"],
@@ -650,6 +717,9 @@ class TransferReceiver:
             return [receipt]
         rec["state"] = "COMPLETE"
         rec["node_id"] = node_id
+        self._audit_verified(rec, node_id)
+        self._audit("transfer_state", transfer_id=rec["transfer_id"],
+                    state="COMPLETE", outcome="accepted")
         receipt = self._sign_response(
             "RECEIPT", rec["sender"],
             {"transfer_id": rec["transfer_id"],
