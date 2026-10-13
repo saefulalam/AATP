@@ -7,6 +7,11 @@ transfer. Grant chains, classification, SEC untrusted-content rules and
 scanner verdicts are M6/M7 policy-engine scope and are NOT enforced here:
 integrity pass yields ``RECEIPT{accepted}`` (quarantine deferred).
 
+One exception, off by default: an injected ``policy_fn`` adds the M6
+authorization gate (grant chain, classification, consumption mode) to the
+OFFER path ahead of the artifact checks (D-044, blueprint section 10.2).
+With ``policy_fn=None`` this receiver behaves exactly as before.
+
 Wire flow per message (``receive_control``, blueprint section 5.3 steps 1-8):
 packet.to match -> own enc-key window (ID-012) -> HPKE open -> JCS parse
 (GEN-010/011) -> pinned trust (ID-003/004) -> signature + revocation check ->
@@ -122,7 +127,12 @@ class TransferReceiver:
                  trusted, own_card=None, dag=None, replay_path=None,
                  store_path=None, clock_skew_seconds: int = 120,
                  send_window_chunks: int = SEND_WINDOW_CHUNKS,
-                 audit_log_path: str | None = None, warn=None):
+                 audit_log_path: str | None = None, warn=None,
+                 policy_fn=None, grant_leaf_env=None, grant_chain_envs=None,
+                 roots=None, policy_action: str = "aatp.artifact.receive",
+                 policy_resource: str = "project:alpha/*",
+                 policy_presenter: str | None = None,
+                 revoked_grants=None):
         self._agent_id = agent_id
         self._signer = signer
         self._keystore = keystore
@@ -138,6 +148,14 @@ class TransferReceiver:
         self._store = self._load_store()
         self._audit_path = Path(audit_log_path) if audit_log_path else None
         self._warn = warn if warn is not None else _default_warn
+        self._policy_fn = policy_fn
+        self._grant_leaf_env = grant_leaf_env
+        self._grant_chain_envs = list(grant_chain_envs or [])
+        self._roots = set(roots) if roots else set()
+        self._policy_action = policy_action
+        self._policy_resource = policy_resource
+        self._policy_presenter = policy_presenter
+        self._revoked_grants = set(revoked_grants) if revoked_grants else set()
 
     # -- durable stores -------------------------------------------------
 
@@ -463,6 +481,59 @@ class TransferReceiver:
                     sender=sender, recipient=self._agent_id, code=code)
         return [env]
 
+    def _policy_verdict(self, msg: dict, body: dict, now: str) -> dict:
+        """Run the injected policy callable before any ACCEPT (D-044).
+
+        Fail closed: a policy that is active while no grant leaf is held is a
+        deny, not an allow-by-absence. An ``AATPError`` from the policy carries
+        its own code into the REJECT; any other exception becomes
+        ``ERR_INTERNAL`` so the caller still gets a signed REJECT instead of a
+        traceback. ``policy_presenter`` overrides the default presenter, which
+        is the OFFER sender (blueprint AUT-006, ``leaf.aud == message.sender``).
+        """
+        if self._grant_leaf_env is None:
+            verdict = {"decision": "deny", "rule_id": "AUT-006",
+                       "code": "ERR_POLICY_DENIED"}
+        else:
+            request = {
+                "action": self._policy_action,
+                "resource": self._policy_resource,
+                "classification": body.get("classification", "PUBLIC"),
+                "consumption_mode": body.get("consumption_mode", "data_only"),
+                "grant_leaf_env": self._grant_leaf_env,
+                "grant_chain_envs": list(self._grant_chain_envs),
+                "roots": set(self._roots),
+                "revoked": set(self._revoked_grants),
+                "manifest": body.get("manifest"),
+                "presenter": self._policy_presenter or msg["sender"],
+                "now": now,
+            }
+            try:
+                verdict = self._policy_fn(request)
+            except AATPError as e:
+                verdict = {"decision": "deny", "rule_id": "AUT-004",
+                           "code": e.code}
+            except Exception:
+                verdict = {"decision": "deny", "rule_id": "INTERNAL",
+                           "code": "ERR_INTERNAL"}
+        if not isinstance(verdict, dict) or verdict.get("decision") != "allow":
+            code = "ERR_POLICY_DENIED"
+            rule = "AUT-006"
+            if isinstance(verdict, dict):
+                if isinstance(verdict.get("code"), str):
+                    code = verdict["code"]
+                if isinstance(verdict.get("rule_id"), str):
+                    rule = verdict["rule_id"]
+            self._audit("policy_decision", subject=msg["sender"],
+                        action=self._policy_action,
+                        resource=self._policy_resource,
+                        decision="deny", rule_id=rule)
+            return {"decision": "deny", "rule_id": rule, "code": code}
+        self._audit("policy_decision", subject=msg["sender"],
+                    action=self._policy_action, resource=self._policy_resource,
+                    decision="allow", rule_id="POLICY-ALLOW")
+        return verdict
+
     def _handle_offer(self, msg: dict, now: str) -> list:
         now_dt = msg_mod.parse_ts(now)
         sender = msg["sender"]
@@ -491,6 +562,12 @@ class TransferReceiver:
             # reusing a transfer_id is a new attempt, which MUST use a new
             # transfer_id (and CEK). Fail closed.
             raise err("ERR_TRANSFER_NOT_FOUND", "transfer_id already in use")
+        if self._policy_fn is not None:
+            # Blueprint 10.2: grant/authorization before artifact checks.
+            verdict = self._policy_verdict(msg, body, now)
+            if verdict["decision"] != "allow":
+                return rej_tx(verdict["code"],
+                              f"policy denied: {verdict['rule_id']}")
         if not isinstance(body.get("content_root"), str) or not \
                 re.match(r"^sha256:[0-9a-f]{64}$", body["content_root"]):
             return rej_tx("ERR_MALFORMED_MESSAGE", "bad content_root")

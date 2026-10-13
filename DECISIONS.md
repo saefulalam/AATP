@@ -305,3 +305,12 @@ Gaps, ambiguities and implementation choices (blueprint §0.4). One entry per de
 - A malformed/corrupt audit file (bad shape, non-hex `head`, record without well-formed `prev_hash`/`entry_hash`) is discarded and a fresh chain starts from `"00" * 32`, with a warning. The shape check must be at least as strict as `sec.audit_append`'s `prev_hash` requirement: a laxer check lets `audit_append` raise through `_audit` and kill the transfer.
 - Audit writes are atomic: temp sibling file + `os.replace`, so a crash mid-write cannot leave a truncated log that permanently disables auditing. The transfer/replay stores keep their existing `write_bytes` path (out of scope here).
 - Audit `transfer_state` events mirror the transfer store's actual states. `VERIFYING` is not a store state — verification runs synchronously inside `_handle_complete` and the record goes from its accept-state straight to `COMPLETE`/`REJECTED` — so it is emitted as a separate phase marker event `artifact_verification_started` (`"phase": "verification_started"`). Writing `state: VERIFYING` into the store would break resume, since `VERIFYING` is not in `CHUNK_ACCEPT_STATES`.
+
+## D-044: Policy gate wiring in the OFFER path (post-M8)
+
+- `TransferReceiver` takes `policy_fn`, `grant_leaf_env`, `grant_chain_envs`, `roots`, `policy_action`, `policy_resource`, `policy_presenter`, `revoked_grants`. All optional; `policy_fn=None` is an exact no-op, so the M0-M5/M6-M7 suites are unchanged.
+- Fail closed: policy active + no grant leaf => deny `ERR_POLICY_DENIED` (rule AUT-006). Absent authorization is never treated as implicit allow.
+- The receiver builds the request and passes `presenter` (default `msg["sender"]`) and `now` so a real `policy.evaluate` can be injected without the caller re-deriving them.
+- Errors: an `AATPError` from the policy propagates its code into the REJECT; any other exception becomes `ERR_INTERNAL` (D-044) so the receiver still answers with a signed REJECT instead of raising.
+- The gate runs before manifest validation, matching blueprint section 10.2 order (grant/authorization before artifact checks).
+- No wire-format change, so the TypeScript M8 implementation needs no update.
