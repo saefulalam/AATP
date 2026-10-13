@@ -5,3 +5,7 @@ __pycache__/
 *.egg-info/
 .superpowers/
 node_modules/
+
+# tools/ demo artifacts: agent state, demo seeds, the relay lock
+run/
+tools/relay.lock
