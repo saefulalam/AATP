@@ -175,16 +175,90 @@ def test_AUD001_unwritable_path_is_best_effort(tmp_path):
     """D-045: audit I/O failure warns, never aborts the transfer."""
     A, B, cards = _world(tmp_path)
     parts = _offer_parts(A, B, [("a.txt", b"best effort", False)])
+    warnings = []
     recv = _receiver(B, cards, tmp_path,
                      audit_log_path=str(tmp_path / "audit.json"),
-                     warn=lambda msg: None)
-    recv._audit_path = tmp_path / "nope" / "missing" / "audit.json"
+                     warn=warnings.append)
+    # A regular file where a parent directory is expected: mkdir/read both
+    # raise OSError subclasses (NotADirectoryError) for this path.
+    (tmp_path / "blocker").write_bytes(b"not a directory")
+    recv._audit_path = tmp_path / "blocker" / "audit.json"
     recv._audit("message_received", msg_id="msg_x")
     out = recv.receive_control(_sealed(A, B, "OFFER", parts["body"],
                                        corr={"transfer_id": "tx_audit"}),
                                now=NOW)
     acc = verify_envelope(out[0], PT_MESSAGE, B.signer.public_key_raw())
     assert acc["type"] == "ACCEPT"
+    assert warnings, "an unwritable audit path must warn, not fail silently"
+
+
+def test_AUD002_corrupt_head_starts_fresh_chain(tmp_path):
+    """D-045: a malformed head is discarded with a warning, not an abort."""
+    A, B, cards = _world(tmp_path)
+    parts = _offer_parts(A, B, [("a.txt", b"corrupt head", False)])
+    log_path = tmp_path / "audit.json"
+    log_path.write_text(json.dumps({"entries": [], "head": "zz"}))
+    warnings = []
+    recv = _receiver(B, cards, tmp_path, audit_log_path=str(log_path),
+                     warn=warnings.append)
+    out = recv.receive_control(_sealed(A, B, "OFFER", parts["body"],
+                                       corr={"transfer_id": "tx_audit"}),
+                               now=NOW)
+    acc = verify_envelope(out[0], PT_MESSAGE, B.signer.public_key_raw())
+    assert acc["type"] == "ACCEPT"
+    assert warnings, "discarding a corrupt audit log must warn"
+    log = json.loads(log_path.read_text())
+    assert log["entries"][0]["prev_hash"] == "00" * 32
+
+
+def test_AUD002_write_is_atomic_and_best_effort(tmp_path, monkeypatch):
+    """D-045: audit writes go via temp + os.replace and leave no temp file."""
+    import os
+    A, B, cards = _world(tmp_path)
+    parts = _offer_parts(A, B, [("a.txt", b"atomic write", False)])
+    log_path = tmp_path / "audit.json"
+    warnings = []
+    recv = _receiver(B, cards, tmp_path, audit_log_path=str(log_path),
+                     warn=warnings.append)
+    recv.receive_control(_sealed(A, B, "OFFER", parts["body"],
+                                 corr={"transfer_id": "tx_audit"}), now=NOW)
+    assert not list(tmp_path.glob("audit.json*tmp*"))
+
+    def boom(*a, **kw):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(os, "replace", boom)
+    recv._audit("message_received", msg_id="msg_y")
+    assert warnings, "a failed atomic replace must warn"
+    assert not list(tmp_path.glob("audit.json*tmp*")), "temp file left behind"
+    # The previous good log is intact (replace failed before it could swap).
+    assert json.loads(log_path.read_text())["entries"]
+
+
+def test_AUD001_transfer_state_events_mirror_the_store(tmp_path):
+    """D-045: transfer_state entries are real store states; VERIFYING is not."""
+    A, B, cards = _world(tmp_path)
+    parts = _offer_parts(A, B, [("a.txt", b"phase marker", False)])
+    recv = _receiver(B, cards, tmp_path,
+                     audit_log_path=str(tmp_path / "audit.json"),
+                     warn=lambda m: None)
+    recv.receive_control(_sealed(A, B, "OFFER", parts["body"],
+                                 corr={"transfer_id": "tx_audit"}), now=NOW)
+    for i in range(parts["total"]):
+        recv.receive_chunk({"transfer_id": "tx_audit", "index": i,
+                            "data": b64u(parts["cts"][i])}, now=NOW)
+    recv.receive_control(_sealed(A, B, "COMPLETE",
+                                 {"transfer_id": "tx_audit",
+                                  "total_chunks": parts["total"]},
+                                 corr={"transfer_id": "tx_audit"}), now=NOW)
+    entries = [e["entry"] for e in _read_log(tmp_path)["entries"]]
+    states = [e.get("state") for e in entries if e["event"] == "transfer_state"]
+    assert states == ["ACCEPTED", "COMPLETE"], states
+    started = [e for e in entries
+               if e["event"] == "artifact_verification_started"]
+    assert len(started) == 1
+    assert started[0]["phase"] == "verification_started"
+    assert started[0].get("state") is None
 
 
 def test_default_no_audit_path_writes_nothing(tmp_path):

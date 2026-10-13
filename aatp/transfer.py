@@ -54,6 +54,8 @@ CLASSIFICATIONS = frozenset({"PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED"}
 CHUNK_SIZE_MAX = 16777216
 TOTAL_CHUNKS_MAX = 4294967295
 
+_HEX64_RE = re.compile(r"[0-9a-f]{64}")
+
 
 def _replay_key(sender: str, msg_id: str) -> str:
     return sender + "\n" + msg_id
@@ -201,17 +203,52 @@ class TransferReceiver:
     # -- audit (AUD-001/002) --------------------------------------------
 
     def _read_audit(self) -> dict:
-        """Current ``{"entries": [...], "head": hex}`` chain state."""
+        """Current ``{"entries": [...], "head": hex}`` chain state.
+
+        A structurally invalid log (missing keys, a non-hex ``head``, a record
+        without well-formed hashes) is discarded and a fresh chain is started
+        from ``"00" * 32``: audit is best-effort, so corruption warns and the
+        transfer keeps moving instead of aborting (D-045). The discarded
+        entries are lost -- the next write overwrites the file with the new
+        chain only.
+        """
         empty = {"entries": [], "head": "00" * 32}
-        if self._audit_path is None:
-            return empty
         obj = self._read_json(self._audit_path)
+        if obj is None:  # no log yet: a fresh chain, not corruption
+            return empty
         if (not isinstance(obj, dict) or not isinstance(obj.get("entries"), list)
-                or not isinstance(obj.get("head"), str)):
-            # Corrupt audit log: start a fresh chain but keep going
-            # (best-effort, D-045). The gap stays visible in the file.
+                or not self._is_hex64(obj.get("head"))
+                or not all(self._record_ok(rec) for rec in obj["entries"])):
+            self._warn(f"audit log corrupt: discarded, new chain from "
+                       f"{'00' * 32}")
             return empty
         return obj
+
+    @staticmethod
+    def _is_hex64(value: object) -> bool:
+        return isinstance(value, str) and _HEX64_RE.fullmatch(value) is not None
+
+    @classmethod
+    def _record_ok(cls, rec: object) -> bool:
+        return (isinstance(rec, dict) and isinstance(rec.get("entry"), dict)
+                and cls._is_hex64(rec.get("prev_hash"))
+                and cls._is_hex64(rec.get("entry_hash")))
+
+    def _write_audit_json(self, obj: dict) -> None:
+        """Atomic audit write (D-045): temp sibling then ``os.replace``, so a
+        crash mid-write cannot leave a truncated log that disables auditing."""
+        path = self._audit_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        try:
+            tmp.write_bytes(json.dumps(obj, sort_keys=True).encode("utf-8") + b"\n")
+            os.replace(str(tmp), str(path))
+        except OSError:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            raise
 
     def _audit(self, event: str, **fields) -> None:
         """Append one hash-chained entry (AUD-002). No path = no-op.
@@ -233,7 +270,7 @@ class TransferReceiver:
         log = state["entries"]
         new_hash = sec_mod.audit_append(log, entry, prev_hash=state["head"])
         try:
-            self._write_json(self._audit_path, {"entries": log, "head": new_hash})
+            self._write_audit_json({"entries": log, "head": new_hash})
         except OSError as e:
             self._warn(f"audit log not written: {e}")
 
@@ -669,8 +706,13 @@ class TransferReceiver:
                 rec["state"] = "RECEIVING"
             self._save_store()
             return [self._status_envelope(rec, now, in_reply_to=msg["id"])]
-        self._audit("transfer_state", transfer_id=txid, state="VERIFYING",
-                    sender=msg["sender"], recipient=self._agent_id)
+        # Phase marker only: the verification runs synchronously below, so the
+        # store never holds a VERIFYING state (it would not be resumable via
+        # CHUNK_ACCEPT_STATES). The record goes from its accept-state straight
+        # to COMPLETE/REJECTED.
+        self._audit("artifact_verification_started", transfer_id=txid,
+                    phase="verification_started", sender=msg["sender"],
+                    recipient=self._agent_id)
         return self._finish_verified(rec, msg, now)
 
     def _finish_verified(self, rec: dict, msg: dict, now: str) -> list:

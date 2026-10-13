@@ -297,3 +297,11 @@ Gaps, ambiguities and implementation choices (blueprint §0.4). One entry per de
   - `PUT /aatp/v0.2/agents/{agent_id}/card` -> 204. Body must be a DSSE `card+json` envelope whose payload `agent_id` equals the path id AND whose signature verifies against the card's own `signing_key` (self-published, proves key-holder authorship). Mismatch/tamper -> 400 (`ERR_MALFORMED_MESSAGE` / `ERR_SIGNATURE_INVALID`).
   - `GET /aatp/v0.2/transfers/{tx}/chunks/{i}` -> 200 `application/octet-stream` / 404 `ERR_TRANSFER_NOT_FOUND` (chunk absent). No auth: chunks are opaque AEAD ciphertext; confidentiality comes from the CEK, not the relay (NET-001/003).
 - The relay itself is unchanged (still opaque, never opens packets).
+
+## D-045: Audit emit is best-effort on I/O failure
+
+- Audit is evidence, not the transfer path. `TransferReceiver._audit` never aborts an in-flight transfer: an audit I/O failure (unreadable log, unwritable path, failed replace) calls the injected `warn` and returns.
+- The one fail-closed case is AUD-001 field rejection: a forbidden key (`cek`, `private_key`, `plaintext`, `payload`, `plaintext_bytes`) raises `ERR_MALFORMED_MESSAGE` out of `sec.audit_append` before anything is written. A secret must never reach the log, so this is not downgraded to a warning.
+- A malformed/corrupt audit file (bad shape, non-hex `head`, record without well-formed `prev_hash`/`entry_hash`) is discarded and a fresh chain starts from `"00" * 32`, with a warning. The shape check must be at least as strict as `sec.audit_append`'s `prev_hash` requirement: a laxer check lets `audit_append` raise through `_audit` and kill the transfer.
+- Audit writes are atomic: temp sibling file + `os.replace`, so a crash mid-write cannot leave a truncated log that permanently disables auditing. The transfer/replay stores keep their existing `write_bytes` path (out of scope here).
+- Audit `transfer_state` events mirror the transfer store's actual states. `VERIFYING` is not a store state — verification runs synchronously inside `_handle_complete` and the record goes from its accept-state straight to `COMPLETE`/`REJECTED` — so it is emitted as a separate phase marker event `artifact_verification_started` (`"phase": "verification_started"`). Writing `state: VERIFYING` into the store would break resume, since `VERIFYING` is not in `CHUNK_ACCEPT_STATES`.
