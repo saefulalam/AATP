@@ -61,6 +61,16 @@ TOTAL_CHUNKS_MAX = 4294967295
 
 _HEX64_RE = re.compile(r"[0-9a-f]{64}")
 
+# A grant failure code names the rule it belongs to (mirrors the mapping in
+# aatp/policy.py); an unmapped code is an issuer-trust failure (AUT-001).
+_POLICY_RULE_BY_CODE = {
+    "ERR_POLICY_DENIED": "AUT-006",
+    "ERR_GRANT_ATTENUATION": "AUT-002",
+    "ERR_GRANT_INVALID": "AUT-004",
+    "ERR_AUTH_FAILED": "AUT-001",
+    "ERR_SIGNATURE_INVALID": "AUT-001",
+}
+
 
 def _replay_key(sender: str, msg_id: str) -> str:
     return sender + "\n" + msg_id
@@ -130,7 +140,7 @@ class TransferReceiver:
                  audit_log_path: str | None = None, warn=None,
                  policy_fn=None, grant_leaf_env=None, grant_chain_envs=None,
                  roots=None, policy_action: str = "aatp.artifact.receive",
-                 policy_resource: str = "project:alpha/*",
+                 policy_resource: str | None = None,
                  policy_presenter: str | None = None,
                  revoked_grants=None):
         self._agent_id = agent_id
@@ -484,13 +494,31 @@ class TransferReceiver:
     def _policy_verdict(self, msg: dict, body: dict, now: str) -> dict:
         """Run the injected policy callable before any ACCEPT (D-044).
 
-        Fail closed: a policy that is active while no grant leaf is held is a
-        deny, not an allow-by-absence. An ``AATPError`` from the policy carries
-        its own code into the REJECT; any other exception becomes
-        ``ERR_INTERNAL`` so the caller still gets a signed REJECT instead of a
-        traceback. ``policy_presenter`` overrides the default presenter, which
-        is the OFFER sender (blueprint AUT-006, ``leaf.aud == message.sender``).
+        Fail closed three ways: an unconfigured ``policy_resource`` and a
+        policy active with no grant leaf are both denies, never an
+        allow-by-absence. An ``AATPError`` from the policy carries its own
+        code into the REJECT and is labelled with the rule that code belongs
+        to; any other exception becomes ``ERR_INTERNAL`` so the caller still
+        gets a signed REJECT instead of a traceback.
+
+        ``presenter`` defaults to this receiver, not the OFFER sender: the
+        action being granted (``aatp.artifact.receive``) is the receiver's own
+        and blueprint section 10.1 issues that leaf to ``aud`` = the receiving
+        agent. The sender stays bound by pinned trust (ID-003) in
+        ``receive_control``, before this gate runs. ``policy_presenter``
+        overrides the default for a deployment whose grants are addressed to
+        the sender.
         """
+        txid = body["transfer_id"]
+        if self._policy_resource is None:
+            # No configured resource means no authorization can be expressed;
+            # deny loudly instead of letting it surface as a res mismatch.
+            self._audit("policy_decision", subject=msg["sender"],
+                        action=self._policy_action, resource="unconfigured",
+                        transfer_id=txid, decision="deny", rule_id="AUT-006")
+            return {"decision": "deny", "rule_id": "AUT-006",
+                    "code": "ERR_POLICY_DENIED",
+                    "detail": "policy_resource must be configured"}
         if self._grant_leaf_env is None:
             verdict = {"decision": "deny", "rule_id": "AUT-006",
                        "code": "ERR_POLICY_DENIED"}
@@ -505,13 +533,14 @@ class TransferReceiver:
                 "roots": set(self._roots),
                 "revoked": set(self._revoked_grants),
                 "manifest": body.get("manifest"),
-                "presenter": self._policy_presenter or msg["sender"],
+                "presenter": self._policy_presenter or self._agent_id,
                 "now": now,
             }
             try:
                 verdict = self._policy_fn(request)
             except AATPError as e:
-                verdict = {"decision": "deny", "rule_id": "AUT-004",
+                verdict = {"decision": "deny",
+                           "rule_id": _POLICY_RULE_BY_CODE.get(e.code, "AUT-001"),
                            "code": e.code}
             except Exception:
                 verdict = {"decision": "deny", "rule_id": "INTERNAL",
@@ -527,11 +556,14 @@ class TransferReceiver:
             self._audit("policy_decision", subject=msg["sender"],
                         action=self._policy_action,
                         resource=self._policy_resource,
-                        decision="deny", rule_id=rule)
+                        transfer_id=txid, decision="deny", rule_id=rule)
             return {"decision": "deny", "rule_id": rule, "code": code}
+        allow_rule = verdict.get("rule_id")
         self._audit("policy_decision", subject=msg["sender"],
                     action=self._policy_action, resource=self._policy_resource,
-                    decision="allow", rule_id="POLICY-ALLOW")
+                    transfer_id=txid, decision="allow",
+                    rule_id=allow_rule if isinstance(allow_rule, str)
+                    else "POLICY-ALLOW")
         return verdict
 
     def _handle_offer(self, msg: dict, now: str) -> list:
@@ -566,7 +598,7 @@ class TransferReceiver:
             # Blueprint 10.2: grant/authorization before artifact checks.
             verdict = self._policy_verdict(msg, body, now)
             if verdict["decision"] != "allow":
-                return rej_tx(verdict["code"],
+                return rej_tx(verdict["code"], verdict.get("detail") or
                               f"policy denied: {verdict['rule_id']}")
         if not isinstance(body.get("content_root"), str) or not \
                 re.match(r"^sha256:[0-9a-f]{64}$", body["content_root"]):
