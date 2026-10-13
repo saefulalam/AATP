@@ -3,7 +3,7 @@
     python tools/simulate_pipeline.py [--port 8765]
 
 Coordinator -> Coder -> Reviewer -> Coordinator, plus a Deployer that is only
-ever a pinned-trust peer. Every packet, chunk and card crosses real HTTP
+ever a trusted peer (ID-003). Every packet, chunk and card crosses real HTTP
 through ``tools/relay_server.py``: sealed packets land in a mailbox, AEAD
 chunks in a transfer store. The relay never opens any of it (NET-001/002).
 
@@ -14,7 +14,7 @@ Exercised, in order:
   * per-file digests and ``content_root`` verification (ART-021/022)
   * the quarantine stub scanner (SEC-007)
   * a HANDOFF_OFFER / HANDOFF_RESPONSE round trip inside the lease (HND-*)
-  * a signed, hash-chained audit log re-verified from scratch (AUD-002)
+  * a hash-chained audit log re-verified from scratch (AUD-002)
 
 and four fail-closed negatives:
   no grant -> ERR_POLICY_DENIED, classification too high -> ERR_POLICY_DENIED,
@@ -144,7 +144,8 @@ def reset_dir(path: Path) -> Path:
 
 
 def bootstrap(run: Path, base: str) -> dict:
-    step(0, "init + publish four agents (cards self-signed, pinned by ID-003)")
+    step(0, "init + publish four agents (cards self-signed, "
+            "trusted via peers.json)")
     for name in AGENTS:
         reset_dir(run / name)
         cli("init", "--dir", str(run / name), "--name", name)

@@ -233,17 +233,29 @@ class TransferReceiver:
     def _read_audit(self) -> dict:
         """Current ``{"entries": [...], "head": hex}`` chain state.
 
-        A structurally invalid log (missing keys, a non-hex ``head``, a record
-        without well-formed hashes) is discarded and a fresh chain is started
-        from ``"00" * 32``: audit is best-effort, so corruption warns and the
+        A log that cannot be parsed -- undecodable bytes, or a structurally
+        invalid shape (missing keys, a non-hex ``head``, a record without
+        well-formed hashes) -- is discarded and a fresh chain is started from
+        ``"00" * 32``: audit is best-effort, so corruption warns and the
         transfer keeps moving instead of aborting (D-045). The discarded
         entries are lost -- the next write overwrites the file with the new
-        chain only.
+        chain only. A log that cannot be *read* (permission, lock) still
+        raises, so a file we cannot open is never silently overwritten.
         """
         empty = {"entries": [], "head": "00" * 32}
-        obj = self._read_json(self._audit_path)
-        if obj is None:  # no log yet: a fresh chain, not corruption
+        path = self._audit_path
+        if path is None:
             return empty
+        try:
+            raw = path.read_bytes()
+        except FileNotFoundError:
+            return empty  # no log yet: a fresh chain, not corruption
+        except OSError:
+            raise err("ERR_INTERNAL", "durable store unreadable") from None
+        try:
+            obj = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            obj = None
         if (not isinstance(obj, dict) or not isinstance(obj.get("entries"), list)
                 or not self._is_hex64(obj.get("head"))
                 or not all(self._record_ok(rec) for rec in obj["entries"])):
@@ -282,8 +294,9 @@ class TransferReceiver:
         """Append one hash-chained entry (AUD-002). No path = no-op.
 
         A forbidden field is rejected by ``sec.audit_append`` before anything
-        is written (AUD-001 fail-closed). Audit I/O failure only warns and
-        never aborts the transfer (D-045).
+        is written (AUD-001 fail-closed); the rejection only warns, so a bad
+        audit call never aborts an in-flight transfer. Audit I/O failure warns
+        for the same reason (D-045).
         """
         if self._audit_path is None:
             return
@@ -296,7 +309,11 @@ class TransferReceiver:
             self._warn(f"audit log unreadable: {e}")
             return
         log = state["entries"]
-        new_hash = sec_mod.audit_append(log, entry, prev_hash=state["head"])
+        try:
+            new_hash = sec_mod.audit_append(log, entry, prev_hash=state["head"])
+        except AATPError as e:
+            self._warn(f"audit entry rejected: {e}")
+            return
         try:
             self._write_audit_json({"entries": log, "head": new_hash})
         except OSError as e:
@@ -510,9 +527,12 @@ class TransferReceiver:
         the sender.
         """
         txid = body["transfer_id"]
-        if self._policy_resource is None:
+        if (not isinstance(self._policy_resource, str)
+                or not self._policy_resource.strip()):
             # No configured resource means no authorization can be expressed;
             # deny loudly instead of letting it surface as a res mismatch.
+            # Blank counts as unconfigured, not as a resource that happens to
+            # match nothing.
             self._audit("policy_decision", subject=msg["sender"],
                         action=self._policy_action, resource="unconfigured",
                         transfer_id=txid, decision="deny", rule_id="AUT-006")

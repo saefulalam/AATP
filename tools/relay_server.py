@@ -133,7 +133,7 @@ def main(argv=None) -> int:
         except (OSError, ValueError):
             owner = {}
         print(f"relay: already running as pid {owner.get('pid')} "
-              f"on port {owner.get('port')}; nothing to do")
+              f"on port {owner.get('port')}; not serving, exiting 2")
         return 2
 
     relay = Relay()

@@ -21,9 +21,12 @@ The relay is opaque: it never opens a sealed packet, a chunk or a card
 | Agent | Role in the run |
 |---|---|
 | **coordinator** | trust root; issues `G1`; accepts the handoff |
-| **coder** | attenuates `G1` into `G2`/`G3`/`G4`; sends the source tree |
+| **coder** | attenuates `G1` into `G2`/`G3`; sends the source tree |
 | **reviewer** | receives under `G2` behind the real `policy.evaluate`; scans; offers the handoff |
-| **deployer** | published and pinned as a peer; takes part in no exchange (kept so the trust set is not a closed pair) |
+| **deployer** | published, so it lands in every peer's `peers.json` trust set; takes part in no exchange (kept so the trust set is not a closed pair) |
+
+The three grants above are the whole chain. The negative cases mint their own
+leaves ad hoc (`Gnweak`, `Gnchunk`, `Gnflip`) — there is no `G4`.
 
 ## Grant chain shape
 
@@ -55,9 +58,12 @@ leaf has to name the party that answers the handoff.
 
 Both leaves name the receiver as `aud`. The OFFER-path policy gate defaults
 `presenter` to the receiving agent (`D-044`), because the action being granted
-there — `aatp.artifact.receive` — is the receiver's own. Sender binding is
-enforced separately by pinned trust (`ID-003`) before the gate runs. Override
-with `--policy-presenter` if your grants are addressed to the sender.
+there — `aatp.artifact.receive` — is the receiver's own. Sender binding is a
+separate `ID-003` check in `receive_control`, before the gate runs: the demo
+hands `TransferReceiver` the trust set `set(cards)`, which is every card in
+`peers.json` plus the receiver's own — these are demo peers, not a pinned trust
+list. Override with `--policy-presenter` if your grants are addressed to the
+sender.
 
 ## Run it
 

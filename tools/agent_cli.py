@@ -37,7 +37,7 @@ from aatp.b64 import b64u, b64u_dec
 from aatp.canon import jcs, parse_jcs
 from aatp.card import CardCache, verify_card
 from aatp.dsse import PT_CARD, PT_GRANT, PT_MESSAGE, make_envelope, verify_envelope
-from aatp.errors import AATPError
+from aatp.errors import AATPError, err
 from aatp.grants import grant_id_of
 from aatp.ids import derive_agent_id
 from aatp.messages import build_message, format_ts, shift_ts
@@ -552,11 +552,18 @@ def cmd_receive(args) -> int:
     cards[st["agent_id"]] = st["card"]
 
     receiver_kwargs = {}
+    if args.audit_log:
+        receiver_kwargs["audit_log_path"] = args.audit_log
     if args.policy:
         grants = load_grants(args)
         roots = set(grants["roots"])
-        key_resolver = lambda aid: b64u_dec(  # noqa: E731
-            cards[aid]["signing_key"]["public_key"])
+
+        def key_resolver(aid):
+            card = cards.get(aid)
+            if card is None:
+                raise err("ERR_AUTH_FAILED", f"no card for {aid}")
+            return b64u_dec(card["signing_key"]["public_key"])
+
         receiver_kwargs.update(
             policy_fn=make_policy(roots, key_resolver),
             grant_leaf_env=grants["leaf"],
@@ -566,8 +573,6 @@ def cmd_receive(args) -> int:
             revoked_grants=set(args.revoked_grant or []))
         if args.policy_presenter:
             receiver_kwargs["policy_presenter"] = args.policy_presenter
-        if args.audit_log:
-            receiver_kwargs["audit_log_path"] = args.audit_log
     receiver = TransferReceiver(
         agent_id=st["agent_id"], signer=st["signer"], keystore=st["keystore"],
         card_resolver=lambda aid: cards[aid], trusted=set(cards),

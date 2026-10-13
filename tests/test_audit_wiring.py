@@ -162,13 +162,32 @@ def test_AUD001_no_secrets_in_audit_entry(tmp_path):
 
 def test_AUD001_forbidden_field_rejected(tmp_path):
     A, B, cards = _world(tmp_path)
+    warnings = []
     recv = _receiver(B, cards, tmp_path,
-                     audit_log_path=str(tmp_path / "audit.json"))
-    from aatp.errors import AATPError
-    with pytest.raises(AATPError) as ei:
-        recv._audit("transfer_state", cek="b64-of-cek")
-    assert ei.value.code == "ERR_MALFORMED_MESSAGE"
+                     audit_log_path=str(tmp_path / "audit.json"),
+                     warn=warnings.append)
+    recv._audit("transfer_state", cek="b64-of-cek")
+    # AUD-001 stays fail-closed: audit_append refuses before it appends, so
+    # nothing is written. D-045 stays best-effort: it warns, not abort.
+    assert warnings, "a forbidden audit field must warn"
     assert not (tmp_path / "audit.json").exists()
+
+
+def test_AUD001_forbidden_field_does_not_abort_a_transfer(tmp_path):
+    """A refused entry warns; the OFFER that triggered it still ACCEPTs."""
+    A, B, cards = _world(tmp_path)
+    parts = _offer_parts(A, B, [("a.txt", b"still delivered", False)])
+    warnings = []
+    recv = _receiver(B, cards, tmp_path,
+                     audit_log_path=str(tmp_path / "audit.json"),
+                     warn=warnings.append)
+    recv._audit("transfer_state", cek="b64-of-cek")
+    out = recv.receive_control(_sealed(A, B, "OFFER", parts["body"],
+                                       corr={"transfer_id": "tx_audit"}),
+                               now=NOW)
+    acc = verify_envelope(out[0], PT_MESSAGE, B.signer.public_key_raw())
+    assert acc["type"] == "ACCEPT"
+    assert "b64-of-cek" not in (tmp_path / "audit.json").read_text()
 
 
 def test_AUD001_unwritable_path_is_best_effort(tmp_path):
@@ -208,6 +227,35 @@ def test_AUD002_corrupt_head_starts_fresh_chain(tmp_path):
     assert acc["type"] == "ACCEPT"
     assert warnings, "discarding a corrupt audit log must warn"
     log = json.loads(log_path.read_text())
+    assert log["entries"][0]["prev_hash"] == "00" * 32
+
+
+@pytest.mark.parametrize("bad", [
+    b'{"entries": [{"entry": {"event": "x"',      # truncated JSON
+    b"\xff\xfe\x00 not utf-8",                     # undecodable bytes
+])
+def test_AUD002_unparseable_bytes_start_fresh_chain(tmp_path, bad):
+    """D-045: a log that cannot be parsed must not disable auditing forever.
+
+    Bad *bytes* reach the same discard path as a bad head -- without that,
+    ``_read_json`` raises, ``_audit`` only warns, and the file is never
+    rewritten, so every later transfer would go unaudited.
+    """
+    A, B, cards = _world(tmp_path)
+    parts = _offer_parts(A, B, [("a.txt", b"unparseable log", False)])
+    log_path = tmp_path / "audit.json"
+    log_path.write_bytes(bad)
+    warnings = []
+    recv = _receiver(B, cards, tmp_path, audit_log_path=str(log_path),
+                     warn=warnings.append)
+    out = recv.receive_control(_sealed(A, B, "OFFER", parts["body"],
+                                       corr={"transfer_id": "tx_audit"}),
+                               now=NOW)
+    acc = verify_envelope(out[0], PT_MESSAGE, B.signer.public_key_raw())
+    assert acc["type"] == "ACCEPT", "a corrupt audit log must not fail closed"
+    assert warnings, "discarding an unparseable audit log must warn"
+    log = json.loads(log_path.read_text())
+    assert log["entries"], "the new chain must actually be written"
     assert log["entries"][0]["prev_hash"] == "00" * 32
 
 
