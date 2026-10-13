@@ -18,6 +18,8 @@
 - No changes to the wire format, so the TypeScript implementation (M8) needs no update.
 - `policy_fn=None` and `audit_log_path=None` must be exact no-ops; the 411-test Python suite and 155-test TS suite must stay green.
 - Policy DENY must produce a signed `REJECT` message, never an exception escaping to the caller.
+- **SUPERSEDED (human decision, landed in P2 fix wave)**: the policy `presenter` default is the **RECEIVER** (`self._agent_id`), NOT `msg["sender"]`. AUT-006's `leaf.aud == message.sender` cannot hold for the OFFER path because the granted action `aatp.artifact.receive` belongs to the receiving agent; sender binding is enforced separately by ID-003 pinned trust. `policy_presenter` overrides it. Recorded in D-044.
+- **SUPERSEDED**: `policy_resource` now defaults to `None` and denies fail-closed with detail `"policy_resource must be configured"` — callers MUST pass it explicitly whenever they set `policy_fn`.
 - Audit I/O failure is best-effort (warn, do not abort the transfer); an entry carrying a forbidden field is still rejected (D-045).
 - Branch `feat/core-m0-m5`; do NOT switch branches or change git config; PowerShell 5.1; tests via `.venv\Scripts\python -m pytest`.
 - New decisions go into `DECISIONS.md` as D-044 (policy wiring) and D-045 (audit best-effort).
@@ -363,7 +365,7 @@ git commit -m "feat: audit emit AUD-001/002 in TransferReceiver"
 
 **Interfaces:**
 - Consumes: `aatp.policy.evaluate(request, *, roots, key_resolver, presenter, now)` (exists), `aatp.grants.make_grant_envelope`? (NOT needed — the caller builds envelopes; see test helper below), `TransferReceiver` from Task P1.
-- Produces: `TransferReceiver(..., policy_fn=None, grant_leaf_env=None, grant_chain_envs=None, roots=None, policy_action="aatp.artifact.receive", policy_resource="project:alpha/*", policy_presenter=None, revoked_grants=None)`. `policy_fn` may be any callable `(request: dict) -> {"decision","rule_id","code"}`; when it is the real `policy.evaluate`, the receiver supplies `roots`/`key_resolver` from its own `card_resolver` and `presenter` from `msg["sender"]`.
+- Produces: `TransferReceiver(..., policy_fn=None, grant_leaf_env=None, grant_chain_envs=None, roots=None, policy_action="aatp.artifact.receive", policy_resource=None, policy_presenter=None, revoked_grants=None)`. `policy_fn` may be any callable `(request: dict) -> {"decision","rule_id","code"}`; when it is the real `policy.evaluate`, the receiver supplies `roots` from its own set and `presenter` defaulting to **itself (the receiver)** — see the SUPERSEDED note in Global Constraints. `policy_resource=None` denies fail-closed.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -652,7 +654,8 @@ Append to `DECISIONS.md`:
 
 - `TransferReceiver` takes `policy_fn`, `grant_leaf_env`, `grant_chain_envs`, `roots`, `policy_action`, `policy_resource`, `policy_presenter`, `revoked_grants`. All optional; `policy_fn=None` is an exact no-op, so the M0-M5/M6-M7 suites are unchanged.
 - Fail closed: policy active + no grant leaf => deny `ERR_POLICY_DENIED` (rule AUT-006). Absent authorization is never treated as implicit allow.
-- The receiver builds the request and passes `presenter` (default `msg["sender"]`) and `now` so a real `policy.evaluate` can be injected without the caller re-deriving them.
+- The receiver builds the request and passes `presenter` (default: the receiver itself, i.e. `self._agent_id`) and `now` so a real `policy.evaluate` can be injected without the caller re-deriving them. See the SUPERSEDED note in Global Constraints for why AUT-006's literal `message.sender` reading does not apply to the OFFER path.
+- `policy_resource` defaults to `None`, which denies fail-closed with detail `"policy_resource must be configured"`; every caller that sets `policy_fn` MUST pass it explicitly.
 - Errors: an `AATPError` from the policy propagates its code into the REJECT; any other exception becomes `ERR_INTERNAL` (D-044) so the receiver still answers with a signed REJECT instead of raising.
 - The gate runs before manifest validation, matching blueprint section 10.2 order (grant/authorization before artifact checks).
 - No wire-format change, so the TypeScript M8 implementation needs no update.
